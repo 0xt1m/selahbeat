@@ -1,0 +1,41 @@
+# XcodeGen output — regenerate with `xcodegen generate`, never commit
+SelahBeat.xcodeproj/
+
+# Build products
+.build/
+DerivedData/
+build/
+*.xcarchive
+*.dmg
+*.zip
+
+# Xcode user state
+xcuserdata/
+*.xcuserdatad
+*.xcworkspace/xcuserdata/
+
+# SwiftPM
+Package.resolved.bak
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Secrets — never commit
+*.p12
+*.p8
+*.pem
+sparkle_private*
+.env
+.env.*
+!.env.example
+
+# Server
+# Unanchored so it also catches server/.next/standalone/node_modules, which the
+# Next.js standalone build creates and which a server/-prefixed rule misses.
+node_modules/
+server/.next/
+server/out/
+server/dist/
+server/data/*.db
+server/data/*.db-*

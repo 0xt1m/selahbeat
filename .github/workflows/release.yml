@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: Build, notarise and publish
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # rev-list --count needs full history.
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+
+      - name: Derive version numbers
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # CFBundleVersion must increase strictly and monotonically forever —
+          # Sparkle compares against it. Commit count is reproducible and needs
+          # no manual bookkeeping (a re-run of a workflow would not be).
+          BUILD=$(git rev-list --count HEAD)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+      - name: Install tools
+        run: brew install xcodegen create-dmg
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Run tests
+        run: swift test
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > /tmp/cert.p12
+          security import /tmp/cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm /tmp/cert.p12
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project SelahBeat.xcodeproj \
+            -scheme SelahBeat-macOS \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath build/SelahBeat.xcarchive \
+            MARKETING_VERSION=${{ steps.version.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ steps.version.outputs.build }}
+
+      - name: Export
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/SelahBeat.xcarchive \
+            -exportOptionsPlist Scripts/ExportOptions-DeveloperID.plist \
+            -exportPath build/export
+
+      # Sparkle embeds XPC services inside its framework, and incorrectly
+      # signed nested bundles are the classic notarisation failure. Fail here,
+      # where the error is legible, rather than inside notarytool.
+      - name: Verify nested signing
+        run: |
+          codesign --verify --deep --strict --verbose=2 build/export/SelahBeat.app
+          find build/export/SelahBeat.app -name "*.xpc" -print0 \
+            | xargs -0 -I{} codesign -dv --verbose=2 {} 2>&1 || true
+
+      - name: Notarise
+        env:
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > /tmp/AuthKey.p8
+          ditto -c -k --keepParent build/export/SelahBeat.app build/notarize.zip
+          xcrun notarytool submit build/notarize.zip \
+            --key /tmp/AuthKey.p8 \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+          # You cannot staple a zip. Notarise the zip, staple the .app, re-zip.
+          xcrun stapler staple build/export/SelahBeat.app
+          rm /tmp/AuthKey.p8
+
+      - name: Package
+        env:
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          mkdir -p build/updates
+          # Zip for Sparkle (post-staple, so a first launch works offline).
+          ditto -c -k --keepParent build/export/SelahBeat.app "build/updates/SelahBeat-$VERSION.zip"
+
+          # DMG for the website download button.
+          create-dmg \
+            --volname "SelahBeat" \
+            --window-size 540 380 \
+            --icon-size 96 \
+            --icon "SelahBeat.app" 140 180 \
+            --app-drop-link 400 180 \
+            "build/SelahBeat-$VERSION.dmg" \
+            build/export/SelahBeat.app
+
+          # The disk image is notarised separately, otherwise the download
+          # itself is quarantine-blocked even though the app inside is fine.
+          echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > /tmp/AuthKey.p8
+          xcrun notarytool submit "build/SelahBeat-$VERSION.dmg" \
+            --key /tmp/AuthKey.p8 --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple "build/SelahBeat-$VERSION.dmg"
+          rm /tmp/AuthKey.p8
+
+      - name: Generate signed appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          # Pull generate_appcast from a pinned Sparkle release rather than the
+          # SwiftPM artifact path, which moves between Xcode versions.
+          SPARKLE_VERSION=2.9.6
+          curl -fsSL -o /tmp/sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p /tmp/sparkle && tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+
+          echo "$SPARKLE_ED_PRIVATE_KEY" > /tmp/sparkle_key
+          /tmp/sparkle/bin/generate_appcast \
+            --ed-key-file /tmp/sparkle_key \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            build/updates/
+          rm /tmp/sparkle_key
+          cat build/updates/appcast.xml
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          gh release create "$GITHUB_REF_NAME" \
+            "build/updates/SelahBeat-$VERSION.zip" \
+            "build/SelahBeat-$VERSION.dmg" \
+            "build/updates/appcast.xml" \
+            --title "SelahBeat $VERSION" \
+            --generate-notes
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain build.keychain || true

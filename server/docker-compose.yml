@@ -1,0 +1,38 @@
+# EC2 deployment. Caddy terminates TLS and obtains certificates automatically,
+# so there is no certbot cron to forget about.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/data/selahbeat.db
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET in .env}
+      - GITHUB_REPO=${GITHUB_REPO:-0xt1m/selahbeat}
+    volumes:
+      # Point this at a mounted EBS volume on EC2 so the catalog outlives the
+      # instance. Back it up by copying the single .db file.
+      - selahbeat-data:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+volumes:
+  selahbeat-data:
+  caddy-data:
+  caddy-config:

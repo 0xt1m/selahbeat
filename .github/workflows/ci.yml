@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Core tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      # The whole core - models, store, search, and the render scheduler -
+      # runs from the command line with no Xcode project, no simulator and no
+      # signing. Fast enough to run on every push.
+      - name: swift test
+        run: swift test
+
+  build:
+    name: Build apps
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build macOS
+        run: |
+          xcodebuild build \
+            -project SelahBeat.xcodeproj \
+            -scheme SelahBeat-macOS \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Build iOS
+        run: |
+          xcodebuild build \
+            -project SelahBeat.xcodeproj \
+            -scheme SelahBeat-iOS \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+  server:
+    name: Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          SESSION_SECRET: ci-placeholder-secret
+          ADMIN_PASSWORD: ci-placeholder-password

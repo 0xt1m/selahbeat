@@ -1,0 +1,88 @@
+name: SelahBeat
+
+options:
+  bundleIdPrefix: app.selahbeat
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: D4DDD7PH6S
+    # SelahBeatCore / SelahBeatUI / SelahBeatAudioC pin Swift 6 language mode in
+    # Package.swift and are unaffected by this. The app targets are thin glue
+    # (@main, root view, event bridge) and stay in Swift 5 mode with targeted
+    # checking, because AppKit has SDK annotation gaps that Swift 6 mode turns
+    # into hard errors for no safety gain -- NSEvent monitor blocks import as
+    # @Sendable while NSEvent itself is not Sendable, even though AppKit only
+    # ever invokes them on the main thread.
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_STRICT_CONCURRENCY: targeted
+
+packages:
+  # The local package holds everything cross-platform, so `swift test` can run
+  # the whole core from the command line with no Xcode and no simulator.
+  SelahBeatCore:
+    path: .
+
+targets:
+  SelahBeat-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - path: Apps/macOS
+    entitlements:
+      path: Apps/macOS/SelahBeat.entitlements
+    settings:
+      base:
+        PRODUCT_NAME: SelahBeat
+        PRODUCT_BUNDLE_IDENTIFIER: app.selahbeat.SelahBeat
+        INFOPLIST_FILE: Apps/macOS/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_ENTITLEMENTS: Apps/macOS/SelahBeat.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    dependencies:
+      - package: SelahBeatCore
+        product: SelahBeatUI
+
+  SelahBeat-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Apps/iOS
+    settings:
+      base:
+        PRODUCT_NAME: SelahBeat
+        PRODUCT_BUNDLE_IDENTIFIER: app.selahbeat.SelahBeat
+        INFOPLIST_FILE: Apps/iOS/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      # Sparkle is deliberately absent: iOS updates through the App Store, and
+      # keeping it out of this target's dependency list makes it structurally
+      # impossible to import here.
+      - package: SelahBeatCore
+        product: SelahBeatUI
+
+schemes:
+  SelahBeat-macOS:
+    build:
+      targets:
+        SelahBeat-macOS: all
+    run:
+      config: Debug
+  SelahBeat-iOS:
+    build:
+      targets:
+        SelahBeat-iOS: all
+    run:
+      config: Debug

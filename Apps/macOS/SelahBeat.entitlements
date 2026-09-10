@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- App Sandbox is intentionally OFF for v1: distribution is Developer ID,
+	     the sandbox is not required, and Sparkle under sandbox needs extra XPC
+	     entitlements for no benefit. Turn it on only if the Mac App Store
+	     becomes a target, at which point Sparkle comes out. -->
+</dict>
+</plist>

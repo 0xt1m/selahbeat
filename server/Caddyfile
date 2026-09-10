@@ -1,0 +1,21 @@
+# Set SITE_ADDRESS to your domain (e.g. selahbeat.app) in .env and Caddy will
+# get and renew a certificate on its own. Leave it as :80 to run plain HTTP
+# while you are still testing on an EC2 public IP.
+{$SITE_ADDRESS} {
+	encode gzip zstd
+
+	# The app polls this on launch; keep it cheap.
+	handle /v1/* {
+		reverse_proxy app:3000
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
