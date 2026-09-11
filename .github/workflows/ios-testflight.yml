@@ -54,7 +54,17 @@ jobs:
           set -euo pipefail
           printf '%s' "$MACOS_CERT_P12_BASE64" | tr -d '[:space:]' \
             | openssl base64 -d -A > /tmp/cert.p12
-          openssl pkcs12 -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD
+
+          # macOS `security export` writes PKCS#12 encrypted with RC2-40-CBC.
+          # OpenSSL 3 refuses legacy algorithms unless the legacy provider is
+          # loaded, while `security import` reads it natively. So this check is
+          # advisory: try both, and never fail the build on it.
+          if openssl pkcs12 -legacy -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD 2>/dev/null \
+             || openssl pkcs12 -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD 2>/dev/null; then
+            echo "certificate bundle verified"
+          else
+            echo "::warning::Could not pre-verify the .p12 with openssl; relying on security import"
+          fi
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain

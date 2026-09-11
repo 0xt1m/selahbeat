@@ -74,7 +74,10 @@ jobs:
           # Confirm it is really a PKCS#12 container, and that the password
           # opens it, before handing it to `security import` - which reports
           # every one of these failures as the same opaque message.
-          if ! openssl pkcs12 -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD 2>/tmp/p12err; then
+          # OpenSSL 3 rejects the RC2-40-CBC that `security export` produces
+          # unless the legacy provider is loaded; try that first.
+          if ! openssl pkcs12 -legacy -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD 2>/tmp/p12err \
+               && ! openssl pkcs12 -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD 2>/tmp/p12err; then
             if grep -qi "mac verify failure\|invalid password" /tmp/p12err; then
               echo "::error::The .p12 is valid but MACOS_CERT_PASSWORD is wrong."
             else
@@ -87,8 +90,10 @@ jobs:
 
           # A .p12 with the certificate but no private key imports fine and then
           # fails much later at codesign, so check for the key up front.
-          if ! openssl pkcs12 -in /tmp/cert.p12 -nocerts -passin env:MACOS_CERT_PASSWORD \
-                 -passout pass:x 2>/dev/null | grep -q "PRIVATE KEY"; then
+          if ! { openssl pkcs12 -legacy -in /tmp/cert.p12 -nocerts -passin env:MACOS_CERT_PASSWORD \
+                   -passout pass:x 2>/dev/null || \
+                 openssl pkcs12 -in /tmp/cert.p12 -nocerts -passin env:MACOS_CERT_PASSWORD \
+                   -passout pass:x 2>/dev/null; } | grep -q "PRIVATE KEY"; then
             echo "::error::This .p12 contains no private key."
             echo "::error::In Keychain Access, expand the certificate with the triangle"
             echo "::error::and select BOTH the certificate and the key before exporting."
