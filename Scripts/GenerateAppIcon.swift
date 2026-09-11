@@ -218,4 +218,17 @@ for px in macSizes {
 }
 try renderPNG(pixels: 1024, macOSStyle: false, to: iosSet.appendingPathComponent("icon_1024.png"))
 
-print("Wrote \(macSizes.count) macOS icons and 1 iOS icon")
+// Website icons. Next.js App Router serves app/icon.png as the favicon and
+// app/apple-icon.png for iOS home-screen bookmarks, generating the <link>
+// tags automatically. Emitting them here means the site's tab icon tracks the
+// app's palette instead of drifting from it.
+let webDir = root.appendingPathComponent("server/src/app")
+if FileManager.default.fileExists(atPath: webDir.path) {
+    // Full-bleed, like the iOS icon: browsers and operating systems apply
+    // their own rounding, so baking in the macOS squircle would double it up.
+    try renderPNG(pixels: 512, macOSStyle: false, to: webDir.appendingPathComponent("icon.png"))
+    try renderPNG(pixels: 180, macOSStyle: false, to: webDir.appendingPathComponent("apple-icon.png"))
+    print("Wrote \(macSizes.count) macOS icons, 1 iOS icon and 2 web icons")
+} else {
+    print("Wrote \(macSizes.count) macOS icons and 1 iOS icon (no server/ directory)")
+}

@@ -76,9 +76,65 @@ export function migrate() {
   `);
 }
 
+/**
+ * Loads catalog/seed-songs.json if the catalog is empty.
+ *
+ * Runs in-process rather than as a separate `npm run seed` step, because the
+ * production image is a Next.js standalone build: it has no tsx, no src/ and no
+ * dev dependencies, so the TypeScript seed script cannot run there. Seeding on
+ * first use means a fresh deployment comes up populated with no extra command.
+ *
+ * Only ever fills an empty catalog, so it can never overwrite edits made in
+ * /admin, and re-running it is a no-op.
+ */
+function seedIfEmpty() {
+  const existing = db.get<{ n: number }>(sql`SELECT COUNT(*) AS n FROM songs`);
+  if (existing && existing.n > 0) return;
+
+  const seedPath = path.resolve(process.cwd(), 'catalog/seed-songs.json');
+  if (!fs.existsSync(seedPath)) {
+    console.warn(`[selahbeat] no seed catalog at ${seedPath}; starting empty`);
+    return;
+  }
+
+  type SeedSong = {
+    id: string; title: string; artist: string | null; bpm: number;
+    beats: number; noteValue: number; key: string | null;
+    notes: string | null; verified?: boolean;
+  };
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(seedPath, 'utf8')) as { songs: SeedSong[] };
+    const now = new Date().toISOString();
+    let revision = 0;
+
+    for (const song of raw.songs) {
+      revision += 1;
+      db.run(sql`
+        INSERT INTO songs (id, title, artist, bpm, beats, note_value, key, notes,
+                           verified, revision, deleted, updated_at)
+        VALUES (${song.id}, ${song.title}, ${song.artist ?? null}, ${song.bpm},
+                ${song.beats}, ${song.noteValue}, ${song.key ?? null},
+                ${song.notes ?? null}, ${song.verified ? 1 : 0}, ${revision}, 0, ${now})
+        ON CONFLICT(id) DO NOTHING
+      `);
+    }
+
+    db.run(sql`
+      INSERT INTO meta (key, value) VALUES ('catalog_revision', ${String(revision)})
+      ON CONFLICT(key) DO UPDATE SET value = ${String(revision)}
+    `);
+
+    console.log(`[selahbeat] seeded ${raw.songs.length} songs`);
+  } catch (error) {
+    console.error('[selahbeat] seed failed:', error);
+  }
+}
+
 let migrated = false;
 export function ensureMigrated() {
   if (migrated) return;
   migrate();
+  seedIfEmpty();
   migrated = true;
 }

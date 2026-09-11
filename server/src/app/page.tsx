@@ -1,32 +1,15 @@
 import Link from 'next/link';
 import { stats } from '@/lib/catalog';
+import { fetchLatestRelease, fetchDownloadStats } from '@/lib/github';
 
 export const dynamic = 'force-dynamic';
 
-type Release = {
-  tag_name: string;
-  html_url: string;
-  published_at: string;
-  assets: { name: string; browser_download_url: string; size: number }[];
-};
-
-/** Best-effort: the page must still render if GitHub is unreachable. */
-async function latestRelease(): Promise<Release | null> {
-  const repo = process.env.GITHUB_REPO ?? '0xt1m/selahbeat';
-  try {
-    const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json' },
-      next: { revalidate: 300 },
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as Release;
-  } catch {
-    return null;
-  }
-}
-
 export default async function LandingPage() {
-  const [release, catalog] = await Promise.all([latestRelease(), Promise.resolve(stats())]);
+  const [release, downloads, catalog] = await Promise.all([
+    fetchLatestRelease(),
+    fetchDownloadStats(),
+    Promise.resolve(stats()),
+  ]);
   const dmg = release?.assets.find((a) => a.name.endsWith('.dmg'));
 
   return (
@@ -39,7 +22,7 @@ export default async function LandingPage() {
         <nav className="flex items-center gap-6 text-sm text-neutral-400">
           <a href="#features" className="hover:text-neutral-100">Features</a>
           <a href="#catalog" className="hover:text-neutral-100">Catalog</a>
-          <Link href="/admin" className="hover:text-neutral-100">Admin</Link>
+          <Link href="/support" className="hover:text-neutral-100">Support</Link>
         </nav>
       </header>
 
@@ -81,6 +64,15 @@ export default async function LandingPage() {
         <p className="mt-4 text-xs text-neutral-500">
           macOS 14 or later. iOS coming next. Updates install themselves.
         </p>
+
+        {downloads && downloads.total > 0 && (
+          <p className="mt-3 text-sm text-neutral-400">
+            <span className="font-semibold text-neutral-200">
+              {downloads.total.toLocaleString()}
+            </span>{' '}
+            {downloads.total === 1 ? 'download' : 'downloads'} so far
+          </p>
+        )}
       </section>
 
       <section id="features" className="mx-auto max-w-5xl px-6 pb-24">
@@ -119,16 +111,36 @@ export default async function LandingPage() {
             {catalog.total} songs with tempos, meters and keys — searchable right inside the
             app, and cached on your device so it keeps working offline.
           </p>
-          <div className="mt-8 flex justify-center gap-10 text-sm">
+          <div className="mt-8 flex flex-wrap justify-center gap-10 text-sm">
             <Stat label="Songs" value={String(catalog.total)} />
             <Stat label="Tempo verified" value={String(catalog.verified)} />
-            <Stat label="Revision" value={String(catalog.revision)} />
+            {downloads && downloads.total > 0 && (
+              <Stat label="Downloads" value={downloads.total.toLocaleString()} />
+            )}
           </div>
         </div>
       </section>
 
       <footer className="mx-auto max-w-5xl px-6 py-10 text-center text-sm text-neutral-600">
-        SelahBeat — built for the people counting it in.
+        <div className="mb-3 flex flex-wrap justify-center gap-6">
+          <Link href="/support" className="hover:text-neutral-400">Support</Link>
+          <Link href="/privacy" className="hover:text-neutral-400">Privacy</Link>
+          <a href="https://0xt1m.com" className="hover:text-neutral-400">Developer</a>
+          <a
+            href="https://github.com/0xt1m"
+            rel="noopener noreferrer"
+            className="hover:text-neutral-400"
+          >
+            GitHub
+          </a>
+        </div>
+        <p>SelahBeat — built for the people counting it in.</p>
+        <p className="mt-1">
+          By{' '}
+          <a href="https://0xt1m.com" className="hover:text-neutral-400">
+            Tymofii Matviiv
+          </a>
+        </p>
       </footer>
     </main>
   );

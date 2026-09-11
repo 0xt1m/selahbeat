@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "seed": "tsx src/db/seed.ts",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postbuild": "rm -rf .next/standalone/.next/static .next/standalone/catalog && cp -r .next/static .next/standalone/.next/static && cp -r catalog .next/standalone/catalog"
   },
   "dependencies": {
     "next": "15.1.6",

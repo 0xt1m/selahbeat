@@ -6,6 +6,17 @@ public enum RootSection: Hashable, CaseIterable {
     case services
     case library
 
+    /// Lets a screenshot run or UI test open straight to a section, matching
+    /// the same launch arguments the compact layout honours.
+    public static var initial: RootSection {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-tab-services") { return .services }
+        if args.contains("-tab-library") { return .library }
+        #endif
+        return .metronome
+    }
+
     var title: String {
         switch self {
         case .metronome: return "Metronome"
@@ -39,7 +50,7 @@ public extension View {
 /// window is regular width. Shared so the two platforms cannot drift.
 public struct WideRootLayout: View {
     @Bindable private var model: AppModel
-    @State private var section: RootSection? = .metronome
+    @State private var section: RootSection? = RootSection.initial
     @State private var servicePath: [UUID] = []
     // Keep the sidebar out by default; on iPad it otherwise auto-collapses to
     // a toggle button, which hides the app's whole navigation.

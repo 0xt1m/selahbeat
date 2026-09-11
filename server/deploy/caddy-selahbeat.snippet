@@ -1,0 +1,21 @@
+# Caddy site block for SelahBeat, to ADD to your existing Caddyfile.
+#
+# Append this to /etc/caddy/Caddyfile — do NOT replace the file, or the other
+# sites on this server will stop being served.
+#
+#   sudo tee -a /etc/caddy/Caddyfile < deploy/caddy-selahbeat.snippet
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Caddy obtains and renews the certificate for this hostname automatically.
+
+selahbeat.com {
+	encode gzip zstd
+
+	reverse_proxy localhost:3411
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}

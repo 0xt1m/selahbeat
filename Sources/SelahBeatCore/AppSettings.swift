@@ -16,7 +16,7 @@ public final class AppSettings {
         public var countInBars: Int = 0
         public var bpmRoundsToWhole: Bool = true
         public var allowsOtherAudio: Bool = false
-        public var serverURL: String = "https://selahbeat.app"
+        public var serverURL: String = "https://selahbeat.com"
         public var tapStartsPlayback: Bool = false
 
         public init() {}

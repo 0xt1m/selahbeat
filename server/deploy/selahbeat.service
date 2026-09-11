@@ -1,0 +1,38 @@
+# systemd unit for SelahBeat, for a server that is NOT using Docker.
+#
+#   sudo cp deploy/selahbeat.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now selahbeat
+#
+# PORT and DATABASE_PATH come from /etc/selahbeat.env so this file needs no
+# edits when sharing a host with other apps.
+
+[Unit]
+Description=SelahBeat server
+Documentation=https://github.com/0xt1m/selahbeat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=selahbeat
+Group=selahbeat
+
+# The Next.js standalone bundle expects to run from its own directory.
+WorkingDirectory=/opt/selahbeat/.next/standalone
+EnvironmentFile=/etc/selahbeat.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+
+Restart=always
+RestartSec=5
+
+# Only the database directory needs to be writable. This keeps a compromise of
+# this app away from the other sites on the box.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/selahbeat
+
+[Install]
+WantedBy=multi-user.target

@@ -49,6 +49,11 @@ public final class UpdateChecker {
     }
 
     public func check() async {
+        #if DEBUG
+        // Screenshot and UI-test runs must not show an update banner; it makes
+        // a store screenshot look like a broken build.
+        if ProcessInfo.processInfo.arguments.contains("-disable-update-check") { return }
+        #endif
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false; lastCheck = Date() }

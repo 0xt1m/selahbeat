@@ -3,7 +3,9 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
+import { headers } from 'next/headers';
 import { checkPassword, createSession, destroySession, isAuthenticated } from '@/lib/auth';
+import { checkRateLimit, recordFailure, clearAttempts } from '@/lib/ratelimit';
 import { upsertSong, softDeleteSong, slugify, getSong } from '@/lib/catalog';
 
 const songSchema = z.object({
@@ -22,11 +24,30 @@ async function requireAdmin() {
   if (!(await isAuthenticated())) redirect('/admin/login');
 }
 
+/** Client IP as seen through the reverse proxy, which sets X-Forwarded-For. */
+async function clientKey(): Promise<string> {
+  const h = await headers();
+  const forwarded = h.get('x-forwarded-for');
+  return forwarded?.split(',')[0]?.trim() || h.get('x-real-ip') || 'unknown';
+}
+
 export async function login(_prev: unknown, formData: FormData) {
+  const key = await clientKey();
+
+  const limit = checkRateLimit(key);
+  if (!limit.allowed) {
+    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+    return { error: `Too many attempts. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.` };
+  }
+
   const password = String(formData.get('password') ?? '');
   if (!checkPassword(password)) {
+    recordFailure(key);
+    // Deliberately does not say whether a password is even configured.
     return { error: 'Incorrect password.' };
   }
+
+  clearAttempts(key);
   await createSession();
   redirect('/admin');
 }

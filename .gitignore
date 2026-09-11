@@ -37,5 +37,7 @@ node_modules/
 server/.next/
 server/out/
 server/dist/
+server/*.tsbuildinfo
+server/tsconfig.tsbuildinfo
 server/data/*.db
 server/data/*.db-*
