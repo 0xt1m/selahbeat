@@ -21,6 +21,28 @@ public enum SongOrigin: Codable, Hashable, Sendable {
 /// lookup source for tempos you don't know - it never reaches back in and
 /// changes a song you have already added. If the catalog later revises a
 /// tempo, that only affects what a future search suggests.
+/// Per-song balance between the click layers.
+///
+/// Deliberately excludes the master level: that is how loud the metronome is in
+/// your ears, and having it jump when you load a song would be unpleasant at
+/// best and dangerous on stage at worst.
+public struct SongMix: Hashable, Codable, Sendable {
+    public var accent: Double
+    public var quarter: Double
+    public var eighth: Double
+    public var sixteenth: Double
+
+    public init(accent: Double = 1.0, quarter: Double = 1.0,
+                eighth: Double = 0.0, sixteenth: Double = 0.0) {
+        self.accent = accent
+        self.quarter = quarter
+        self.eighth = eighth
+        self.sixteenth = sixteenth
+    }
+
+    public static let standard = SongMix()
+}
+
 public struct Song: Identifiable, Codable, Hashable, Sendable {
     public var id: SongID
     public var title: String
@@ -32,6 +54,9 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
     public var defaultKey: MusicalKey?
     public var origin: SongOrigin
     public var notes: String?
+    /// nil means "whatever the mix is set to"; loading such a song leaves the
+    /// current balance alone rather than resetting it.
+    public var mix: SongMix?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -44,6 +69,7 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         defaultKey: MusicalKey? = nil,
         origin: SongOrigin = .custom,
         notes: String? = nil,
+        mix: SongMix? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -55,6 +81,7 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         self.defaultKey = defaultKey
         self.origin = origin
         self.notes = notes
+        self.mix = mix
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

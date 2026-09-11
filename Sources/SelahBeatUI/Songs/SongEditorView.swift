@@ -20,6 +20,28 @@ public struct SongEditorView: View {
         self.onSave = onSave
     }
 
+    private func mixSlider(_ label: String, _ key: WritableKeyPath<SongMix, Double>) -> some View {
+        let binding = Binding<Double>(
+            get: { draft.mix?[keyPath: key] ?? 0 },
+            set: { newValue in
+                var mix = draft.mix ?? .standard
+                mix[keyPath: key] = newValue
+                draft.mix = mix
+            }
+        )
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(label).font(.system(size: 12, weight: .medium))
+                Spacer()
+                Text(binding.wrappedValue == 0 ? "muted"
+                     : "\(Int(binding.wrappedValue / 2.0 * 100))%")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(binding.wrappedValue == 0 ? Theme.warning : Theme.secondaryText)
+            }
+            Slider(value: binding, in: 0...2).tint(Theme.accent)
+        }
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(isNew ? "New Song" : "Edit Song")
@@ -82,12 +104,37 @@ public struct SongEditorView: View {
                     }
                 }
 
+                Section("Click mix") {
+                    Toggle("Custom mix for this song", isOn: Binding(
+                        get: { draft.mix != nil },
+                        set: { on in
+                            // Seed from whatever is currently set up, so the
+                            // starting point is what you were just listening to.
+                            draft.mix = on ? model.metronome.currentMix : nil
+                        }
+                    ))
+
+                    if draft.mix != nil {
+                        mixSlider("Accent", \.accent)
+                        mixSlider("Quarter notes", \.quarter)
+                        mixSlider("Eighth notes", \.eighth)
+                        mixSlider("Sixteenth notes", \.sixteenth)
+
+                        Button("Preview this mix") {
+                            if let mix = draft.mix { model.metronome.apply(mix) }
+                        }
+                    } else {
+                        Text("This song will use whatever the mix is set to.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Notes") {
-                    TextField("Anything worth remembering", text: Binding(
+                    NotesField("Anything worth remembering", text: Binding(
                         get: { draft.notes ?? "" },
                         set: { draft.notes = $0.isEmpty ? nil : $0 }
-                    ), axis: .vertical)
-                    .lineLimit(2...5)
+                    ))
                 }
             }
             .formStyle(.grouped)

@@ -231,6 +231,26 @@ public final class MetronomeController {
         setTempo(resolved.bpm)
         timeSignature = resolved.timeSignature
         regeneratePattern()
+
+        // A song without its own mix leaves the current balance untouched.
+        if let mix = resolved.song.mix {
+            apply(mix)
+        }
+    }
+
+    /// Applies a song's saved layer balance.
+    public func apply(_ mix: SongMix) {
+        accentGain = mix.accent
+        quarterGain = mix.quarter
+        eighthGain = mix.eighth
+        sixteenthGain = mix.sixteenth
+        applyLevelGains()
+    }
+
+    /// The current balance, for saving onto a song.
+    public var currentMix: SongMix {
+        SongMix(accent: accentGain, quarter: quarterGain,
+                eighth: eighthGain, sixteenth: sixteenthGain)
     }
 
     public func loadSong(_ song: Song) {

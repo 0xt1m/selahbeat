@@ -727,3 +727,59 @@ struct CatalogAddTests {
         #expect(store.resolvedItems(in: youth.id).first?.bpm == 125)
     }
 }
+
+@Suite("Per-song mix")
+struct SongMixTests {
+    @Test("A song with no custom mix decodes from older saved data")
+    func backwardCompatible() throws {
+        // A library saved before per-song mixes existed has no "mix" key.
+        // This is exactly what the encoder produced before the field was added.
+        let json = """
+        {"updatedAt":"2026-09-11T12:43:21Z","id":"local:4271897D-7763-47D8-8810-B7B754B3E53C",\
+        "origin":{"custom":{}},"defaultBPM":120,\
+        "defaultTimeSignature":{"noteValue":4,"beats":4},\
+        "createdAt":"2026-09-11T12:43:21Z","title":"Praise"}
+        """.data(using: .utf8)!
+        let song = try JSONFileStore<Song>.makeDecoder().decode(Song.self, from: json)
+        #expect(song.title == "Praise")
+        #expect(song.mix == nil, "a missing mix must decode as nil, not fail")
+    }
+
+    @Test("A custom mix round-trips through saving")
+    func roundTrips() throws {
+        var song = Song(title: "Praise", defaultBPM: 120)
+        song.mix = SongMix(accent: 1.4, quarter: 0.8, eighth: 0.5, sixteenth: 0)
+
+        let data = try JSONFileStore<Song>.makeEncoder().encode(song)
+        let restored = try JSONFileStore<Song>.makeDecoder().decode(Song.self, from: data)
+
+        #expect(restored.mix?.accent == 1.4)
+        #expect(restored.mix?.eighth == 0.5)
+        #expect(restored.mix?.sixteenth == 0)
+    }
+
+    @Test("The default mix is a plain pulse")
+    func defaultIsPlainPulse() {
+        let mix = SongMix.standard
+        #expect(mix.accent == 1)
+        #expect(mix.quarter == 1)
+        #expect(mix.eighth == 0, "eighths start muted")
+        #expect(mix.sixteenth == 0)
+    }
+
+    @Test("Duplicating a song carries its mix")
+    func duplicateCarriesMix() async {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("selahbeat-tests-\(UUID().uuidString)")
+        let store = await MainActor.run { LibraryStore(persistence: PersistenceCoordinator(directory: dir)) }
+        await store.bootstrap()
+
+        var song = Song(title: "Praise", defaultBPM: 120)
+        song.mix = SongMix(accent: 0, quarter: 1, eighth: 1, sixteenth: 0)
+        let stored = await MainActor.run { store.addSong(song) }
+        let copy = await MainActor.run { store.duplicateSong(stored.id) }
+
+        #expect(copy?.mix?.eighth == 1)
+        #expect(copy?.mix?.accent == 0)
+    }
+}

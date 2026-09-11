@@ -21,9 +21,15 @@ public struct UpdateBanner: View {
                     .foregroundStyle(Theme.primaryText)
                 Spacer()
 
-                if model.updater?.canInstallUpdates == true {
+                if model.updater != nil {
                     Button {
-                        model.updater?.installUpdate()
+                        if model.updater?.canInstallUpdates == true {
+                            model.updater?.installUpdate()
+                        } else {
+                            // Sparkle busy or unable to check: at least get the
+                            // user to the download rather than doing nothing.
+                            openURL(release.url)
+                        }
                     } label: {
                         Text("Update Now")
                             .font(.system(size: 12, weight: .bold))

@@ -262,9 +262,9 @@ struct ServiceItemEditor: View {
                 bpmOverride
                 Spacer()
             }
-            TextField("Notes (e.g. half-time feel at bridge)", text: notesBinding, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...3)
+            NotesField("Notes (e.g. half-time feel at bridge)", text: notesBinding, minHeight: 54)
+                .padding(6)
+                .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 7))
         }
         .padding(12)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))

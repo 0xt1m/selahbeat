@@ -21,32 +21,62 @@ public struct StartStopButton: View {
         self.showsLabel = showsLabel
     }
 
+    private var title: String { controller.isRunning ? "STOP" : "START" }
+    private var symbol: String { controller.isRunning ? "stop.fill" : "play.fill" }
+
     public var body: some View {
         InstantButton {
             controller.toggle()
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: controller.isRunning ? "stop.fill" : "play.fill")
-                    .font(.system(size: height * (showsLabel ? 0.32 : 0.40), weight: .bold))
-                if showsLabel {
-                    Text(controller.isRunning ? "STOP" : "START")
-                        .font(.system(size: height * 0.26, weight: .heavy, design: .rounded))
-                        .kerning(1.5)
-                }
-            }
-            .foregroundStyle(controller.isRunning ? Color.black : Theme.primaryText)
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
-                    .fill(controller.isRunning ? Theme.running : Theme.surfaceRaised)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
-                    .strokeBorder(controller.isRunning ? .clear : Theme.accent.opacity(0.7), lineWidth: 2)
-            )
-            .contentShape(Rectangle())
+            content
+                .foregroundStyle(controller.isRunning ? Color.black : Theme.primaryText)
+                .frame(maxWidth: .infinity)
+                .frame(height: height)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
+                        .fill(controller.isRunning ? Theme.running : Theme.surfaceRaised)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
+                        .strokeBorder(controller.isRunning ? .clear : Theme.accent.opacity(0.7), lineWidth: 2)
+                )
+                .contentShape(Rectangle())
         }
         .accessibilityLabel(controller.isRunning ? "Stop metronome" : "Start metronome")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if showsLabel {
+            // Drop the word rather than wrapping it. A narrow window used to
+            // break "START" across three lines, which looked broken and made
+            // the glyph tiny.
+            ViewThatFits(in: .horizontal) {
+                labelled
+                glyph(scale: 0.40)
+            }
+        } else {
+            glyph(scale: 0.40)
+        }
+    }
+
+    private var labelled: some View {
+        HStack(spacing: 12) {
+            glyph(scale: 0.32)
+            Text(title)
+                .font(.system(size: height * 0.26, weight: .heavy, design: .rounded))
+                .kerning(1.5)
+                .lineLimit(1)
+                // Without this the text would compress to fit instead of
+                // reporting that it does not, and ViewThatFits would never
+                // fall through to the glyph.
+                .fixedSize()
+        }
+        .padding(.horizontal, 10)
+    }
+
+    private func glyph(scale: CGFloat) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: height * scale, weight: .bold))
     }
 }
