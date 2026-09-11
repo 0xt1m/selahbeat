@@ -23,6 +23,9 @@ struct SelahBeatApp: App {
             .frame(minWidth: 940, minHeight: 660)
             .task {
                 await model.bootstrap()
+                // Lets the update banner install in place rather than only
+                // linking out to the release notes.
+                model.updater = updater
                 eventBridge = AppKitEventBridge(model: model)
                 isReady = true
             }

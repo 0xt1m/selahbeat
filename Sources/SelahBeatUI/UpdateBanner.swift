@@ -20,6 +20,21 @@ public struct UpdateBanner: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.primaryText)
                 Spacer()
+
+                if model.updater?.canInstallUpdates == true {
+                    Button {
+                        model.updater?.installUpdate()
+                    } label: {
+                        Text("Update Now")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Theme.accent, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button("What's new") { openURL(release.url) }
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))

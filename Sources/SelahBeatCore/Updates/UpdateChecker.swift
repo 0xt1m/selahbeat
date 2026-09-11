@@ -9,6 +9,17 @@ import OSLog
 /// linked into the macOS target, upgrades that to download-and-install in one
 /// click. Both silently do nothing when offline — a metronome must never
 /// interrupt a service with a network error.
+/// Something that can install an update in place.
+///
+/// Implemented on macOS by Sparkle, which lives in the app target because it
+/// must never be linked into the iOS build. Nil elsewhere, and the banner
+/// falls back to linking at the release notes.
+@MainActor
+public protocol AppUpdating: AnyObject {
+    var canInstallUpdates: Bool { get }
+    func installUpdate()
+}
+
 @MainActor
 @Observable
 public final class UpdateChecker {

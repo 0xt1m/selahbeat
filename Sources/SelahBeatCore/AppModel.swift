@@ -12,6 +12,9 @@ public final class AppModel {
     public let network: NetworkMonitor
     public let settings: AppSettings
     public let updates = UpdateChecker()
+    /// Set by the macOS app to Sparkle. Nil on iOS, where the App Store owns
+    /// updating and the app must not try to update itself.
+    public var updater: AppUpdating?
     public private(set) var sync: CatalogSync?
 
     /// Which service the sidebar has selected, if any.
@@ -69,7 +72,11 @@ public final class AppModel {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard let self else { return }
+            // iOS updates through the App Store. Checking GitHub there would
+            // advertise the macOS release, which an iPhone cannot install.
+            #if os(macOS)
             await self.updates.check()
+            #endif
             await self.sync?.syncIfStale()
         }
     }
