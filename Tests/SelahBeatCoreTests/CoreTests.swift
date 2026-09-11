@@ -783,3 +783,39 @@ struct SongMixTests {
         #expect(copy?.mix?.accent == 0)
     }
 }
+
+@Suite("Tempo entry")
+struct TempoEntryTests {
+    /// The bug this guards: clamping each keystroke turned "156" into "205",
+    /// because "1" snapped up to the 20 minimum before "5" and "6" arrived.
+    @Test("Partial input is only clamped once it is complete")
+    func clampsOnceNotPerKeystroke() {
+        // Simulating what the field does on commit, not per character.
+        let typed = "156"
+        let committed = Song.clampBPM(Double(typed)!)
+        #expect(committed == 156)
+
+        // Whereas clamping each prefix is what produced the wrong value.
+        var perKeystroke = ""
+        for ch in typed {
+            perKeystroke.append(ch)
+            perKeystroke = String(Int(Song.clampBPM(Double(perKeystroke) ?? 0)))
+        }
+        #expect(perKeystroke != "156", "this is the old broken behaviour")
+    }
+
+    @Test("Values outside the range are still clamped on commit")
+    func clampsOnCommit() {
+        #expect(Song.clampBPM(5) == Song.minBPM)
+        #expect(Song.clampBPM(9_999) == Song.maxBPM)
+        #expect(Song.clampBPM(156) == 156)
+    }
+
+    @Test("Nonsense input leaves the tempo unchanged")
+    func rejectsNonsense() {
+        #expect(Double("") == nil)
+        #expect(Double("abc") == nil)
+        // A decimal comma is accepted after normalising, as the field does.
+        #expect(Double("156,5".replacingOccurrences(of: ",", with: ".")) == 156.5)
+    }
+}

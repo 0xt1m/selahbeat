@@ -9,6 +9,7 @@ public struct ServiceDetailView: View {
 
     @State private var showingAddSong = false
     @State private var editingItemID: UUID?
+    @State private var editingSong: Song?
     @State private var renaming = false
     @State private var draftName = ""
     @State private var toastMessage: String?
@@ -34,6 +35,19 @@ public struct ServiceDetailView: View {
         .toast($toastMessage)
         .sheet(isPresented: $showingAddSong) {
             AddSongSheet(model: model, serviceID: serviceID)
+        }
+        // The same editor the library uses, so a song can be changed properly
+        // from wherever you happen to be looking at it.
+        .sheet(item: $editingSong) { song in
+            SongEditorView(model: model, song: song) { saved in
+                model.library.updateSong(saved)
+                // Keep the transport in step if this song is loaded.
+                if model.metronome.loadedItem?.song.id == saved.id,
+                   let item = model.library.service(serviceID)?.items.first(where: { $0.songID == saved.id }),
+                   let refreshed = model.library.resolved(item) {
+                    model.metronome.load(refreshed, serviceID: serviceID)
+                }
+            }
         }
     }
 
@@ -89,6 +103,7 @@ public struct ServiceDetailView: View {
                     toggleEditing: {
                         editingItemID = editingItemID == resolved.item.id ? nil : resolved.item.id
                     },
+                    onEditSong: { editingSong = resolved.song },
                     onToast: { toastMessage = $0 }
                 )
                 .listRowBackground(Color.clear)
@@ -145,6 +160,7 @@ struct ServiceRow: View {
     let isLoaded: Bool
     let isEditing: Bool
     let toggleEditing: () -> Void
+    let onEditSong: () -> Void
     let onToast: (String) -> Void
 
     var body: some View {
@@ -205,9 +221,20 @@ struct ServiceRow: View {
                 } label: {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 14))
+                        .foregroundStyle(isEditing ? Theme.accent : Theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Key and tempo for this service")
+
+                Button {
+                    onEditSong()
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 13))
                         .foregroundStyle(Theme.secondaryText)
                 }
                 .buttonStyle(.plain)
+                .help("Edit the song")
             }
             .padding(.vertical, 8)
             .contentShape(Rectangle())
@@ -239,7 +266,11 @@ struct ServiceRow: View {
                 excluding: serviceID,
                 onAdded: onToast
             )
-            Button("Edit song\u{2026}") { toggleEditing() }
+            // Two different things, so they are two different actions: the song
+            // itself (tempo, meter, key, mix) versus how it is played in this
+            // one service.
+            Button("Edit song\u{2026}") { onEditSong() }
+            Button("Key and tempo for this service\u{2026}") { toggleEditing() }
             Divider()
             Button("Remove from service", role: .destructive) {
                 model.library.removeItem(resolved.item.id, from: serviceID)

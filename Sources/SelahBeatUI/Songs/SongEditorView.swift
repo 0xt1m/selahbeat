@@ -20,6 +20,17 @@ public struct SongEditorView: View {
         self.onSave = onSave
     }
 
+    /// The common meters, plus whatever this song already uses if it is not
+    /// among them - otherwise editing a 7/4 song would show a blank picker and
+    /// silently rewrite the meter on save.
+    private var meterOptions: [TimeSignature] {
+        var options = TimeSignature.common
+        if !options.contains(draft.defaultTimeSignature) {
+            options.append(draft.defaultTimeSignature)
+        }
+        return options
+    }
+
     private func mixSlider(_ label: String, _ key: WritableKeyPath<SongMix, Double>) -> some View {
         let binding = Binding<Double>(
             get: { draft.mix?[keyPath: key] ?? 0 },
@@ -60,19 +71,7 @@ public struct SongEditorView: View {
 
                 Section("Tempo") {
                     HStack(spacing: 14) {
-                        // Typed entry: most of the time you already know the
-                        // tempo, and typing beats holding a stepper.
-                        TextField("BPM", value: $draft.defaultBPM, format: .number)
-                            #if os(iOS)
-                            .keyboardType(.numberPad)
-                            #endif
-                            .textFieldStyle(.roundedBorder)
-                            .font(Theme.tempoFont(size: 24))
-                            .frame(width: 92)
-                            .onChange(of: draft.defaultBPM) { _, newValue in
-                                let clamped = Song.clampBPM(newValue)
-                                if clamped != newValue { draft.defaultBPM = clamped }
-                            }
+                        BPMField(bpm: $draft.defaultBPM)
                         Stepper("", value: $draft.defaultBPM, in: Song.minBPM...Song.maxBPM, step: 1)
                             .labelsHidden()
                         InstantButton {
@@ -90,8 +89,21 @@ public struct SongEditorView: View {
                 }
 
                 Section("Meter and key") {
-                    Picker("Time signature", selection: $draft.defaultTimeSignature) {
-                        ForEach(TimeSignature.common, id: \.self) { Text($0.display).tag($0) }
+                    // Tagged by display string rather than by the struct itself:
+                    // SwiftUI matches struct tags unreliably when the selection
+                    // binds through a nested property of a @State value, which
+                    // left this picker refusing to change.
+                    Picker("Time signature", selection: Binding(
+                        get: { draft.defaultTimeSignature.display },
+                        set: { chosen in
+                            if let match = meterOptions.first(where: { $0.display == chosen }) {
+                                draft.defaultTimeSignature = match
+                            }
+                        }
+                    )) {
+                        ForEach(meterOptions, id: \.display) { meter in
+                            Text(meter.display).tag(meter.display)
+                        }
                     }
                     Picker("Key", selection: Binding(
                         get: { draft.defaultKey?.asciiDisplay ?? "" },
