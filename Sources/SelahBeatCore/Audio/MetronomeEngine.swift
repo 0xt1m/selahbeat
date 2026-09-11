@@ -47,10 +47,27 @@ public final class MetronomeEngine: @unchecked Sendable {
     private var currentSampleRate: Double = 48_000
     private var preferredBufferFrames: Int = 256
 
+    /// Banks whose sample memory the render thread may still be reading.
+    ///
+    /// Releasing a ClickBank frees its arena, and the published parameters hold
+    /// raw pointers into it. Dropping the old bank the instant a new one is
+    /// built is a use-after-free on the audio thread - which is what made
+    /// connecting AirPods crash, since the route change alters the sample rate.
+    /// Retired banks are held until the render thread has certainly adopted the
+    /// new pointers.
+    private var retiredBanks: [ClickBank] = []
+
+    /// A route change can arrive as both a session route-change notification and
+    /// an engine configuration-change notification. Rebuilding the graph
+    /// re-entrantly corrupts it.
+    private var isReconfiguring = false
+
     // Last published configuration, so any single change can republish the set.
     private var bpm: Double = 120
     private var pattern: ClickPattern = .standard(for: .fourFour, subdivision: .quarter)
     private var timbre: ClickTimbre = .woodblock
+    /// Per-level mix busses, indexed by SBAccentLevel.
+    private var levelGains = [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
 
     public private(set) var lastError: String?
 
@@ -128,34 +145,82 @@ public final class MetronomeEngine: @unchecked Sendable {
 
     private func rebuildBank(sampleRate: Double) {
         guard bank?.sampleRate != sampleRate else { return }
-        bank = ClickBank(sampleRate: sampleRate)
-        if bank == nil {
+        guard let newBank = ClickBank(sampleRate: sampleRate) else {
+            // Keep the existing bank rather than leaving the engine with none.
             lastError = "Could not synthesise click sounds"
+            return
+        }
+        if let previous = bank {
+            retiredBanks.append(previous)
+        }
+        bank = newBank
+    }
+
+    /// Frees retired banks once the render thread cannot still be reading them.
+    ///
+    /// Half a second is far longer than needed - the parameter publish is
+    /// picked up within one render quantum (~5 ms) and the longest click tail
+    /// is 400 ms - but this runs on a route change, not in any hot path.
+    private func releaseRetiredBanks() {
+        guard !retiredBanks.isEmpty else { return }
+        let doomed = retiredBanks
+        retiredBanks.removeAll()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            _ = doomed.count   // holds the references until the deadline
         }
     }
 
     /// Rebuilds the graph after a device or route change. Without this the
     /// click silently dies mid-service when someone plugs in headphones.
     public func handleConfigurationChange() {
-        let wasRunning = sb_is_running(state)
-        sb_stop(state)
+        guard !isReconfiguring else { return }
+        isReconfiguring = true
+        defer { isReconfiguring = false }
 
-        if let node = sourceNode {
-            engine.disconnectNodeOutput(node)
-            engine.detach(node)
-            sourceNode = nil
-        }
+        // The click always stops on a route change. Resuming into a device the
+        // drummer just plugged in or pulled out is worse than silence: the
+        // latency characteristics have changed and they are not expecting it.
+        sb_stop(state)
         engine.stop()
 
-        buildGraph()
-        startGraph()
-
-        if wasRunning {
-            // Phase restarts at the downbeat. There is no meaningful way to
-            // preserve phase across a device swap, and a fresh downbeat is what
-            // a drummer would want anyway.
-            sb_start(state)
+        // Immediately after a route change the output format can briefly report
+        // a zero sample rate. Connecting with that raises an Objective-C
+        // exception that Swift cannot catch, so bail out; another notification
+        // follows once the route has settled.
+        let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
+        let sampleRate = hardwareFormat.sampleRate
+        guard sampleRate > 0, hardwareFormat.channelCount > 0 else {
+            log.notice("Route change reported an invalid format; waiting for the next notification")
+            return
         }
+
+        if sampleRate != currentSampleRate {
+            currentSampleRate = sampleRate
+            sb_engine_set_sample_rate(state, sampleRate)
+            rebuildBank(sampleRate: sampleRate)
+        }
+
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate,
+                                         channels: max(1, min(hardwareFormat.channelCount, 2))) else {
+            lastError = "Could not create audio format after route change"
+            return
+        }
+
+        // Reconnect the existing node rather than detaching and rebuilding it.
+        // Detaching invalidates the node the render block was built around and
+        // is far more fragile mid-route-change.
+        if let node = sourceNode {
+            engine.disconnectNodeOutput(node)
+            engine.connect(node, to: engine.outputNode, format: format)
+        } else {
+            buildGraph()
+        }
+
+        // Publish before starting, so the render thread never observes the new
+        // sample rate alongside pointers into the retired bank.
+        publishParams()
+        startGraph()
+        releaseRetiredBanks()
     }
 
     #if os(macOS)
@@ -219,6 +284,15 @@ public final class MetronomeEngine: @unchecked Sendable {
         publishParams()
     }
 
+    /// Sets one mix bus. Takes effect on the next render, so it is safe to drag
+    /// a slider while the click is running.
+    public func setLevelGain(_ gain: Double, for level: SBAccentLevel) {
+        let index = Int(level.rawValue)
+        guard levelGains.indices.contains(index) else { return }
+        levelGains[index] = Float(max(0, min(gain, 2)))
+        publishParams()
+    }
+
     public func setMasterGain(_ gain: Float) {
         sb_set_master_gain(state, gain)
     }
@@ -233,18 +307,22 @@ public final class MetronomeEngine: @unchecked Sendable {
     private func publishParams() {
         guard let bank else { return }
         var sounds = bank.sounds(for: timbre)
-        var levels = pattern.levels
+        let levels = pattern.levels
         let framesPerTick = pattern.framesPerTick(bpm: bpm, sampleRate: currentSampleRate)
 
         levels.withUnsafeBufferPointer { levelsPtr in
             sounds.withUnsafeMutableBufferPointer { soundsPtr in
-                sb_publish_params(
-                    state,
-                    framesPerTick,
-                    UInt32(levels.count),
-                    levelsPtr.baseAddress,
-                    soundsPtr.baseAddress
-                )
+                levelGains.withUnsafeBufferPointer { gainsPtr in
+                    sb_publish_params(
+                        state,
+                        framesPerTick,
+                        UInt32(levels.count),
+                        UInt32(pattern.ticksPerBeat),
+                        levelsPtr.baseAddress,
+                        soundsPtr.baseAddress,
+                        gainsPtr.baseAddress
+                    )
+                }
             }
         }
     }

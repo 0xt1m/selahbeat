@@ -125,11 +125,14 @@ static inline float sb_decay(uint32_t i, double tauSamples) {
 /// and shorter so it sits under the beat rather than competing with it.
 static void sb_level_shape(int32_t level, double *pitchMul, double *gain, double *decayMul) {
     switch (level) {
-        case SB_LEVEL_DOWNBEAT:    *pitchMul = 1.500; *gain = 1.00; *decayMul = 1.00; break;
-        case SB_LEVEL_ACCENT:      *pitchMul = 1.250; *gain = 0.82; *decayMul = 0.90; break;
-        case SB_LEVEL_BEAT:        *pitchMul = 1.000; *gain = 0.68; *decayMul = 0.85; break;
-        case SB_LEVEL_SUBDIVISION: *pitchMul = 1.000; *gain = 0.34; *decayMul = 0.50; break;
-        default:                   *pitchMul = 1.000; *gain = 0.68; *decayMul = 0.85; break;
+        case SB_LEVEL_DOWNBEAT:  *pitchMul = 1.500; *gain = 1.00; *decayMul = 1.00; break;
+        case SB_LEVEL_ACCENT:    *pitchMul = 1.250; *gain = 0.82; *decayMul = 0.90; break;
+        case SB_LEVEL_QUARTER:   *pitchMul = 1.000; *gain = 0.68; *decayMul = 0.85; break;
+        case SB_LEVEL_EIGHTH:    *pitchMul = 1.000; *gain = 0.38; *decayMul = 0.55; break;
+        // Sixteenths sit under the eighths by default: at speed they are
+        // texture, not information.
+        case SB_LEVEL_SIXTEENTH: *pitchMul = 1.000; *gain = 0.26; *decayMul = 0.40; break;
+        default:                 *pitchMul = 1.000; *gain = 0.68; *decayMul = 0.85; break;
     }
 }
 

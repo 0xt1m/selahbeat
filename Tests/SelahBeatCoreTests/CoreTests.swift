@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import SelahBeatCore
+import SelahBeatAudioC
 
 @Suite("Tap tempo")
 struct TapTempoTests {
@@ -182,20 +183,30 @@ struct MeterTests {
         #expect(pattern.levels[3] == 3)   // second pulse is a beat, not a subdivision
     }
 
-    @Test("4/4 with eighths alternates beats and subdivisions")
+    @Test("Straight meters always lay out on a sixteenth grid")
     func simpleMeter() {
+        // The grid does not depend on the subdivision picker: the mix busses
+        // decide what is audible, so every layer has a tick to live on.
         let pattern = ClickPattern.standard(for: .fourFour, subdivision: .eighth)
-        #expect(pattern.ticksPerBar == 8)
-        #expect(pattern.levels == [1, 4, 3, 4, 3, 4, 3, 4])
+        #expect(pattern.ticksPerBar == 16)
+        #expect(pattern.ticksPerBeat == 4)
+        #expect(pattern.levels == [1, 5, 4, 5,   3, 5, 4, 5,
+                                   3, 5, 4, 5,   3, 5, 4, 5])
     }
 
-    @Test("Frames per tick tracks tempo and subdivision")
+    @Test("Frames per tick follows the grid, so the beat stays at the set tempo")
     func framesPerTick() {
-        let quarters = ClickPattern.standard(for: .fourFour, subdivision: .quarter)
-        #expect(quarters.framesPerTick(bpm: 120, sampleRate: 48_000) == 24_000)
+        // 120 BPM on a sixteenth grid: a tick every 6000 frames, which is a
+        // quarter note every 24000 - the tempo the user actually set.
+        let pattern = ClickPattern.standard(for: .fourFour, subdivision: .quarter)
+        let perTick = pattern.framesPerTick(bpm: 120, sampleRate: 48_000)
+        #expect(perTick == 6_000)
+        #expect(perTick * Double(pattern.ticksPerBeat) == 24_000)
 
-        let eighths = ClickPattern.standard(for: .fourFour, subdivision: .eighth)
-        #expect(eighths.framesPerTick(bpm: 120, sampleRate: 48_000) == 12_000)
+        // Triplets keep their own grid; three ticks still make one beat.
+        let triplets = ClickPattern.standard(for: .fourFour, subdivision: .triplet)
+        #expect(triplets.ticksPerBeat == 3)
+        #expect(triplets.framesPerTick(bpm: 120, sampleRate: 48_000) * 3 == 24_000)
     }
 
     @Test("Odd meters build a full bar")
@@ -203,7 +214,8 @@ struct MeterTests {
         let sevenEight = TimeSignature(beats: 7, noteValue: 8)
         #expect(!sevenEight.isCompound)
         let pattern = ClickPattern.standard(for: sevenEight, subdivision: .quarter)
-        #expect(pattern.ticksPerBar == 7)
+        #expect(pattern.ticksPerBar == 7 * 4)
+        #expect(pattern.levels.filter { $0 == UInt8(SB_LEVEL_QUARTER.rawValue) }.count == 6)
     }
 }
 
@@ -246,11 +258,12 @@ struct CatalogTests {
             revision: 3
         )
         let song = entry.toSong()
-        #expect(song.id == SongID.catalog("way-maker"))
+        // A library song owns its identity; the catalog slug is provenance.
+        #expect(song.id.isLocal)
+        #expect(song.origin.catalogID == "way-maker")
         #expect(song.defaultBPM == 66)
         #expect(song.defaultKey?.asciiDisplay == "E")
         #expect(song.origin.isCatalog)
-        #expect(song.isUserModified == false)
     }
 
     @Test("Namespaced IDs keep custom songs from colliding with catalog slugs")
@@ -413,5 +426,304 @@ struct ServiceEditingTests {
         components.year = 2026; components.month = 9; components.day = 10
         let thursday = Calendar.current.date(from: components)!
         #expect(store.suggestedServiceName(from: thursday).contains("13"))
+    }
+}
+
+@Suite("Mix busses")
+struct MixBusTests {
+    @Test("The grid separates eighths from sixteenths")
+    func sixteenthsGetTheirOwnLevel() {
+        let pattern = ClickPattern.standard(for: .fourFour, subdivision: .sixteenth)
+        #expect(pattern.ticksPerBar == 16)
+        // Within one beat: downbeat/quarter, 16th, 8th, 16th.
+        #expect(pattern.levels[0] == UInt8(SB_LEVEL_DOWNBEAT.rawValue))
+        #expect(pattern.levels[1] == UInt8(SB_LEVEL_SIXTEENTH.rawValue))
+        #expect(pattern.levels[2] == UInt8(SB_LEVEL_EIGHTH.rawValue))
+        #expect(pattern.levels[3] == UInt8(SB_LEVEL_SIXTEENTH.rawValue))
+        #expect(pattern.levels[4] == UInt8(SB_LEVEL_QUARTER.rawValue))
+    }
+
+    @Test("Every layer has a tick, so a bus can be unmuted to add it")
+    func everyLayerPresent() {
+        let pattern = ClickPattern.standard(for: .fourFour, subdivision: .quarter)
+        #expect(pattern.levels.contains(UInt8(SB_LEVEL_QUARTER.rawValue)))
+        #expect(pattern.levels.contains(UInt8(SB_LEVEL_EIGHTH.rawValue)))
+        #expect(pattern.levels.contains(UInt8(SB_LEVEL_SIXTEENTH.rawValue)))
+    }
+
+    @Test("Triplets use the eighth bus, since they have no sixteenths")
+    func tripletsUseEighthBus() {
+        let pattern = ClickPattern.standard(for: .fourFour, subdivision: .triplet)
+        #expect(pattern.ticksPerBeat == 3)
+        #expect(pattern.levels[1] == UInt8(SB_LEVEL_EIGHTH.rawValue))
+        #expect(pattern.levels[2] == UInt8(SB_LEVEL_EIGHTH.rawValue))
+        #expect(!pattern.levels.contains(UInt8(SB_LEVEL_SIXTEENTH.rawValue)))
+    }
+
+    @Test("Muting a bus silences only that bus")
+    func mutedBusIsSilent() {
+        let h = RenderHarness()
+        // One beat split into sixteenths: quarter, 16th, 8th, 16th.
+        let pattern: [UInt8] = [
+            UInt8(SB_LEVEL_DOWNBEAT.rawValue),
+            UInt8(SB_LEVEL_SIXTEENTH.rawValue),
+            UInt8(SB_LEVEL_EIGHTH.rawValue),
+            UInt8(SB_LEVEL_SIXTEENTH.rawValue),
+        ]
+        var gains = [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
+        gains[Int(SB_LEVEL_SIXTEENTH.rawValue)] = 0      // mute sixteenths only
+
+        h.publish(framesPerTick: 1_000, pattern: pattern, levelGains: gains)
+        h.start()
+        h.renderFrames(1_000 * 8, bufferSize: 256)
+
+        let levels = Set(h.onsetLevels)
+        #expect(!levels.contains(Int(SB_LEVEL_SIXTEENTH.rawValue)), "muted bus still sounded")
+        #expect(levels.contains(Int(SB_LEVEL_DOWNBEAT.rawValue)))
+        #expect(levels.contains(Int(SB_LEVEL_EIGHTH.rawValue)))
+    }
+
+    @Test("Bus gain scales the level it belongs to")
+    func gainScalesAmplitude() {
+        let quiet = RenderHarness()
+        var gains = [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
+        gains[Int(SB_LEVEL_QUARTER.rawValue)] = 0.5
+
+        let pattern: [UInt8] = [UInt8(SB_LEVEL_QUARTER.rawValue)]
+        quiet.publish(framesPerTick: 1_000, pattern: pattern, levelGains: gains)
+        quiet.start()
+        quiet.renderFrames(4_000, bufferSize: 256)
+
+        // The harness impulse for a level equals its raw value; a 0.5 bus
+        // halves it, so rounding lands below the unscaled amplitude.
+        #expect(!quiet.onsets.isEmpty)
+    }
+}
+
+@Suite("Catalog independence")
+struct CatalogIndependenceTests {
+    private func entry(bpm: Double, revision: Int = 1) -> CatalogSong {
+        CatalogSong(id: "praise", title: "Praise", artist: "Elevation Worship",
+                    bpm: bpm, beats: 4, noteValue: 4, key: "Ab", revision: revision)
+    }
+
+    @Test("A song added from the catalog keeps its tempo when the server changes")
+    func serverChangeDoesNotAffectAddedSong() {
+        // Added at 120.
+        let added = entry(bpm: 120).toSong()
+        #expect(added.defaultBPM == 120)
+
+        // The server later revises it to 125. The local copy is a value type
+        // the catalog has no path back into - decoding a newer catalog entry
+        // produces a separate Song and never mutates this one.
+        let laterServerVersion = entry(bpm: 125, revision: 2).toSong()
+
+        #expect(added.defaultBPM == 120, "the copy on the device must not move")
+        #expect(laterServerVersion.defaultBPM == 125)
+        #expect(added.id != laterServerVersion.id, "each add is its own object")
+    }
+
+    @Test("A catalog song becomes an ordinary local song once added")
+    func importedSongIsFullyLocal() {
+        let song = entry(bpm: 120).toSong()
+        #expect(song.origin.isCatalog)
+        #expect(song.origin.catalogID == "praise")
+        #expect(song.defaultBPM == 120)
+        #expect(song.defaultKey?.asciiDisplay == "Ab")
+    }
+
+    @Test("Editing a local copy is unconstrained")
+    func localEditsAreFree() {
+        var song = entry(bpm: 120).toSong()
+        song.defaultBPM = 96
+        song.title = "Praise (our arrangement)"
+        #expect(song.defaultBPM == 96)
+        #expect(song.title == "Praise (our arrangement)")
+    }
+}
+
+@Suite("Accent muting")
+struct AccentMutingTests {
+    /// The behaviour that matters most: silencing the accent must not punch a
+    /// hole in the pulse. 4/4 with no accent is four even quarter notes.
+    @Test("Muting the accent leaves the downbeat sounding as a quarter")
+    func mutedAccentFallsBackToQuarter() {
+        let h = RenderHarness()
+        let pattern: [UInt8] = [
+            UInt8(SB_LEVEL_DOWNBEAT.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+        ]
+        var gains = [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
+        gains[Int(SB_LEVEL_DOWNBEAT.rawValue)] = 0      // accent bus muted
+
+        h.publish(framesPerTick: 1_000, pattern: pattern, ticksPerBeat: 1, levelGains: gains)
+        h.start()
+        h.renderFrames(1_000 * 8, bufferSize: 256)
+
+        #expect(h.onsets.count == 8, "a muted accent must not leave a gap")
+        #expect(h.onsetLevels.allSatisfy { $0 == Int(SB_LEVEL_QUARTER.rawValue) },
+                "beat one should sound as a plain quarter, not as an accent")
+    }
+
+    @Test("With the accent unmuted the downbeat is distinct")
+    func accentSoundsWhenUnmuted() {
+        let h = RenderHarness()
+        let pattern: [UInt8] = [
+            UInt8(SB_LEVEL_DOWNBEAT.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+        ]
+        h.publish(framesPerTick: 1_000, pattern: pattern, ticksPerBeat: 1)
+        h.start()
+        h.renderFrames(1_000 * 4, bufferSize: 256)
+
+        #expect(h.onsetLevels.first == Int(SB_LEVEL_DOWNBEAT.rawValue))
+        #expect(h.onsetLevels.dropFirst().allSatisfy { $0 == Int(SB_LEVEL_QUARTER.rawValue) })
+    }
+
+    @Test("Muting the quarter bus too leaves real silence")
+    func mutingBothSilencesTheBeat() {
+        let h = RenderHarness()
+        let pattern: [UInt8] = [
+            UInt8(SB_LEVEL_DOWNBEAT.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+        ]
+        var gains = [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
+        gains[Int(SB_LEVEL_DOWNBEAT.rawValue)] = 0
+        gains[Int(SB_LEVEL_QUARTER.rawValue)] = 0
+
+        h.publish(framesPerTick: 1_000, pattern: pattern, ticksPerBeat: 1, levelGains: gains)
+        h.start()
+        h.renderFrames(1_000 * 6, bufferSize: 256)
+
+        #expect(h.onsets.isEmpty)
+    }
+}
+
+@Suite("Adding from the catalog")
+@MainActor
+struct CatalogAddTests {
+    private func store() async -> LibraryStore {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("selahbeat-tests-\(UUID().uuidString)")
+        let s = LibraryStore(persistence: PersistenceCoordinator(directory: dir))
+        await s.bootstrap()
+        return s
+    }
+
+    private func entry(bpm: Double, revision: Int = 1) -> CatalogSong {
+        CatalogSong(id: "praise", title: "Praise", artist: "Elevation Worship",
+                    bpm: bpm, beats: 4, noteValue: 4, key: "Ab", revision: revision)
+    }
+
+    @Test("Each add from the catalog is a new independent object")
+    func eachAddIsSeparate() {
+        let first = entry(bpm: 125).toSong()
+        let second = entry(bpm: 120).toSong()
+
+        #expect(first.id != second.id, "two adds must not share an identity")
+        #expect(first.id.isLocal, "a library song carries its own local id")
+        #expect(second.id.isLocal)
+        // Provenance is still recorded, as metadata only.
+        #expect(first.origin.catalogID == "praise")
+    }
+
+    @Test("Two songs can share a name and differ in tempo")
+    func sameNameDifferentTempo() async {
+        let store = await store()
+        let mine = store.addSong(entry(bpm: 125).toSong())
+        let fromServer = store.addSong(entry(bpm: 120).toSong())
+
+        #expect(store.allSongs.count == 2)
+        #expect(mine.title == fromServer.title)
+        #expect(mine.defaultBPM == 125)
+        #expect(fromServer.defaultBPM == 120)
+
+        // Both are findable; neither shadows the other.
+        let found = store.search("praise")
+        #expect(found.count == 2)
+        #expect(Set(found.map(\.defaultBPM)) == [125, 120])
+    }
+
+    @Test("Editing one copy leaves the other alone")
+    func editingOneIsIsolated() async {
+        let store = await store()
+        var mine = store.addSong(entry(bpm: 125).toSong())
+        let other = store.addSong(entry(bpm: 120).toSong())
+
+        mine.defaultBPM = 96
+        mine.title = "Praise (our arrangement)"
+        store.updateSong(mine)
+
+        #expect(store.song(other.id)?.defaultBPM == 120)
+        #expect(store.song(other.id)?.title == "Praise")
+        #expect(store.song(mine.id)?.defaultBPM == 96)
+    }
+
+    @Test("Deleting one copy leaves the other in place")
+    func deletingOneIsIsolated() async {
+        let store = await store()
+        let mine = store.addSong(entry(bpm: 125).toSong())
+        let other = store.addSong(entry(bpm: 120).toSong())
+
+        store.deleteSong(mine.id)
+
+        #expect(store.song(mine.id) == nil)
+        #expect(store.song(other.id)?.defaultBPM == 120)
+    }
+
+    @Test("Duplicating makes an independent copy")
+    func duplicateIsIndependent() async {
+        let store = await store()
+        let original = store.addSong(entry(bpm: 125).toSong())
+        let copy = store.duplicateSong(original.id)
+
+        #expect(copy != nil)
+        #expect(copy?.id != original.id)
+        #expect(copy?.title == original.title, "a duplicate keeps its name")
+        #expect(copy?.defaultBPM == 125)
+        #expect(store.allSongs.count == 2)
+
+        // Retuning the copy must not disturb the original.
+        var retuned = copy!
+        retuned.defaultBPM = 96
+        store.updateSong(retuned)
+        #expect(store.song(original.id)?.defaultBPM == 125)
+    }
+
+    @Test("Duplicating leaves existing services pointing at the original")
+    func duplicateDoesNotStealPlacements() async {
+        let store = await store()
+        let original = store.addSong(entry(bpm: 125).toSong())
+        let service = store.createService(name: "Sunday")
+        store.addSong(original.id, to: service.id)
+
+        let copy = store.duplicateSong(original.id)!
+        #expect(store.service(service.id)?.items.first?.songID == original.id)
+        #expect(store.usageCount(of: copy.id) == 0)
+    }
+
+    @Test("Duplicating a song that does not exist returns nil")
+    func duplicateMissingSong() async {
+        let store = await store()
+        #expect(store.duplicateSong(.local()) == nil)
+    }
+
+    @Test("Each copy can sit in a different service at its own tempo")
+    func separateCopiesInSeparateServices() async {
+        let store = await store()
+        let slow = store.addSong(entry(bpm: 96).toSong())
+        let fast = store.addSong(entry(bpm: 125).toSong())
+
+        let sunday = store.createService(name: "Sunday")
+        let youth = store.createService(name: "Youth")
+        store.addSong(slow.id, to: sunday.id)
+        store.addSong(fast.id, to: youth.id)
+
+        #expect(store.resolvedItems(in: sunday.id).first?.bpm == 96)
+        #expect(store.resolvedItems(in: youth.id).first?.bpm == 125)
     }
 }

@@ -9,6 +9,8 @@ import SelahBeatCore
 public struct MetronomeView: View {
     @Bindable private var model: AppModel
     @State private var savingSong: Song?
+    @State private var isEditingTempo = false
+    @State private var tempoDraft = ""
 
     public init(model: AppModel) {
         self.model = model
@@ -37,6 +39,16 @@ public struct MetronomeView: View {
             .background(Theme.surface)
         }
         .background(Theme.surface)
+        .alert("Set tempo", isPresented: $isEditingTempo) {
+            TextField("BPM", text: $tempoDraft)
+                #if os(iOS)
+                .keyboardType(.numberPad)
+                #endif
+            Button("Cancel", role: .cancel) { }
+            Button("Set") { commitTempo() }
+        } message: {
+            Text("\(Int(Song.minBPM)) to \(Int(Song.maxBPM)) BPM")
+        }
         .sheet(item: $savingSong) { song in
             SongEditorView(model: model, song: song, isNew: true) { saved in
                 let stored = model.library.addSong(saved)
@@ -75,6 +87,12 @@ public struct MetronomeView: View {
         .frame(maxWidth: 1500)
     }
 
+    private func commitTempo() {
+        let cleaned = tempoDraft.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(cleaned) else { return }
+        controller.setTempo(value)
+    }
+
     // MARK: - Tempo
 
     private func tempoBlock(bpmSize: CGFloat, controlWidth: CGFloat) -> some View {
@@ -93,16 +111,27 @@ public struct MetronomeView: View {
                 }
             }
 
-            Text(controller.bpm == controller.bpm.rounded()
-                 ? String(Int(controller.bpm))
-                 : String(format: "%.1f", controller.bpm))
-                .font(Theme.tempoFont(size: bpmSize))
-                .foregroundStyle(Theme.primaryText)
-                .contentTransition(.numericText())
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
+            // Tap the number to type a tempo. Tapping the thing you want to
+            // change is more discoverable than a separate field, and the hit
+            // target is enormous.
+            Button {
+                tempoDraft = String(Int(controller.bpm))
+                isEditingTempo = true
+            } label: {
+                Text(controller.bpm == controller.bpm.rounded()
+                     ? String(Int(controller.bpm))
+                     : String(format: "%.1f", controller.bpm))
+                    .font(Theme.tempoFont(size: bpmSize))
+                    .foregroundStyle(Theme.primaryText)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Tempo. Currently \(Int(controller.bpm)). Tap to type a tempo.")
 
-            Text("BEATS PER MINUTE")
+            Text("TAP NUMBER TO TYPE")
                 .font(.system(size: 11, weight: .bold))
                 .kerning(2)
                 .foregroundStyle(Theme.secondaryText)
@@ -255,30 +284,62 @@ public struct MetronomeView: View {
     }
 
     private var levelBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
-                sectionTitle("Click volume")
+                sectionTitle("Mix")
                 Spacer()
-                Text("\(Int(controller.masterGain / 1.5 * 100))%")
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                Button("Reset") { resetMix() }
+                    .buttonStyle(.plain)
+                    .font(.caption)
                     .foregroundStyle(Theme.secondaryText)
             }
-            HStack(spacing: 12) {
-                Image(systemName: "speaker.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryText)
-                Slider(value: Bindable(controller).masterGain, in: 0...1.5) { editing in
-                    if !editing { model.persistSettingsFromMetronome() }
-                }
-                .tint(Theme.accent)
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryText)
-            }
+
+            mixSlider("Master", value: Bindable(controller).masterGain, range: 0...1.5)
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            // Separate busses so sixteenths can sit under the eighths, and both
+            // under the beat, without changing the click sound itself.
+            mixSlider("Accent", value: Bindable(controller).accentGain, range: 0...2)
+            mixSlider("Quarter notes", value: Bindable(controller).quarterGain, range: 0...2)
+            mixSlider("Eighth notes", value: Bindable(controller).eighthGain, range: 0...2)
+            mixSlider("Sixteenth notes", value: Bindable(controller).sixteenthGain, range: 0...2)
+
+            Text("Unmute eighths to add offbeats between the quarter notes, and sixteenths to fill between those. Muting the accent leaves the downbeat sounding as a plain quarter.")
+                .font(.caption2)
+                .foregroundStyle(Theme.secondaryText.opacity(0.8))
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardBackground()
+    }
+
+    private func mixSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.primaryText)
+                Spacer()
+                Text(value.wrappedValue == 0 ? "muted"
+                     : "\(Int(value.wrappedValue / range.upperBound * 100))%")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(value.wrappedValue == 0 ? Theme.warning : Theme.secondaryText)
+            }
+            Slider(value: value, in: range) { editing in
+                if !editing { model.persistSettingsFromMetronome() }
+            }
+            .tint(Theme.accent)
+        }
+    }
+
+    private func resetMix() {
+        controller.masterGain = 0.8
+        controller.accentGain = 1.0
+        controller.quarterGain = 1.0
+        controller.eighthGain = 1.0
+        controller.sixteenthGain = 1.0
+        model.persistSettingsFromMetronome()
     }
 
     private func sectionTitle(_ text: String) -> some View {

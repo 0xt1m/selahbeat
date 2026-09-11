@@ -61,10 +61,12 @@ SBEngineState *sb_engine_create(double sampleRate) {
     // Slot 0 is a valid but silent default: 120 BPM, 4/4, no sounds loaded yet.
     st->slots[0].framesPerTick = st->sampleRate * 60.0 / 120.0;
     st->slots[0].ticksPerBar = 4;
+    st->slots[0].ticksPerBeat = 1;
     st->slots[0].pattern[0] = SB_LEVEL_DOWNBEAT;
-    st->slots[0].pattern[1] = SB_LEVEL_BEAT;
-    st->slots[0].pattern[2] = SB_LEVEL_BEAT;
-    st->slots[0].pattern[3] = SB_LEVEL_BEAT;
+    st->slots[0].pattern[1] = SB_LEVEL_QUARTER;
+    st->slots[0].pattern[2] = SB_LEVEL_QUARTER;
+    st->slots[0].pattern[3] = SB_LEVEL_QUARTER;
+    for (int i = 0; i < SB_ACCENT_LEVELS; i++) st->slots[0].levelGain[i] = 1.0f;
     st->slots[0].generation = 0;
 
     st->framesPerTick = st->slots[0].framesPerTick;
@@ -130,8 +132,10 @@ void sb_preview(SBEngineState *st, int32_t level) {
 void sb_publish_params(SBEngineState *st,
                        double framesPerTick,
                        uint32_t ticksPerBar,
+                       uint32_t ticksPerBeat,
                        const uint8_t *pattern,
-                       const SBSoundRef *sounds) {
+                       const SBSoundRef *sounds,
+                       const float *levelGain) {
     if (!st) return;
     if (ticksPerBar == 0 || ticksPerBar > SB_MAX_TICKS_PER_BAR) return;
     if (!(framesPerTick > 1.0) || !isfinite(framesPerTick)) return;
@@ -141,6 +145,7 @@ void sb_publish_params(SBEngineState *st,
 
     p->framesPerTick = framesPerTick;
     p->ticksPerBar = ticksPerBar;
+    p->ticksPerBeat = (ticksPerBeat == 0) ? 1 : ticksPerBeat;
 
     memset(p->pattern, 0, sizeof(p->pattern));
     if (pattern) {
@@ -152,6 +157,10 @@ void sb_publish_params(SBEngineState *st,
 
     for (int i = 0; i < SB_ACCENT_LEVELS; i++) {
         p->sounds[i] = sounds ? sounds[i] : (SBSoundRef){ NULL, 0, 0.0f };
+        float g = levelGain ? levelGain[i] : 1.0f;
+        if (!(g >= 0.0f)) g = 0.0f;      // also rejects NaN
+        if (g > 2.0f) g = 2.0f;
+        p->levelGain[i] = g;
     }
 
     p->generation = ++st->writerGeneration;
@@ -164,6 +173,18 @@ void sb_publish_params(SBEngineState *st,
     if (next == st->writerPrevSlot) next = (next + 1) % SB_PARAM_SLOTS;
     st->writerPrevSlot = slot;
     st->writerNextSlot = next;
+}
+
+/// What a tick is musically, from its position inside the beat.
+///
+/// Used as the fallback when the accent bus is muted: silencing the accent must
+/// not leave a hole in the pulse, it should leave the underlying note sounding.
+static inline uint8_t sb_natural_level(uint32_t tickInBar, uint32_t ticksPerBeat) {
+    if (ticksPerBeat <= 1) return SB_LEVEL_QUARTER;
+    uint32_t pos = tickInBar % ticksPerBeat;
+    if (pos == 0) return SB_LEVEL_QUARTER;
+    if (ticksPerBeat == 4) return (pos == 2) ? SB_LEVEL_EIGHTH : SB_LEVEL_SIXTEENTH;
+    return SB_LEVEL_EIGHTH;
 }
 
 // MARK: - Voices
@@ -196,8 +217,9 @@ static inline void sb_mix_voice(SBEngineState *st,
 
 /// Claims a voice slot for `snd`. Steals the oldest if all are busy.
 /// Returns NULL if the sound is empty.
-static inline SBVoice *sb_trigger(SBEngineState *st, const SBSoundRef *snd) {
+static inline SBVoice *sb_trigger(SBEngineState *st, const SBSoundRef *snd, float busGain) {
     if (!snd || !snd->samples || snd->length == 0) return NULL;
+    if (busGain <= 0.0f) return NULL;   // a muted bus costs no voice at all
 
     int32_t idx = -1;
     for (int i = 0; i < SB_MAX_VOICES; i++) {
@@ -217,7 +239,7 @@ static inline SBVoice *sb_trigger(SBEngineState *st, const SBSoundRef *snd) {
     SBVoice *v = &st->voices[idx];
     v->samples = snd->samples;
     v->length = snd->length;
-    v->gain = snd->gain;
+    v->gain = snd->gain * busGain;
     v->cursor = 0;
     v->active = 1;
     v->order = ++st->voiceOrderCounter;
@@ -285,7 +307,7 @@ OSStatus sb_render(SBEngineState *st,
     const int32_t preview = atomic_load_explicit(&st->previewLevel, memory_order_acquire);
     if (preview >= 0 && preview < SB_ACCENT_LEVELS) {
         atomic_store_explicit(&st->previewLevel, -1, memory_order_release);
-        SBVoice *v = sb_trigger(st, &p->sounds[preview]);
+        SBVoice *v = sb_trigger(st, &p->sounds[preview], p->levelGain[preview]);
         if (v) sb_mix_voice(st, v, 0, frameCount);
     }
 
@@ -316,10 +338,20 @@ OSStatus sb_render(SBEngineState *st,
             if (offset >= frameCount) offset = frameCount - 1;
 
             const uint32_t tickInBar = (uint32_t)(st->absoluteTickIndex % st->ticksPerBar);
-            const uint8_t level = p->pattern[tickInBar];
+            uint8_t level = p->pattern[tickInBar];
+            float busGain = (level < SB_ACCENT_LEVELS) ? p->levelGain[level] : 0.0f;
+
+            // Muting the accent bus must not punch a gap in the pulse: an
+            // accented tick drops back to whatever it is underneath, so 4/4
+            // with no accent is four even quarter notes.
+            if (busGain <= 0.0f &&
+                (level == SB_LEVEL_DOWNBEAT || level == SB_LEVEL_ACCENT)) {
+                level = sb_natural_level(tickInBar, p->ticksPerBeat);
+                busGain = p->levelGain[level];
+            }
 
             if (level != SB_LEVEL_SILENT && level < SB_ACCENT_LEVELS) {
-                SBVoice *v = sb_trigger(st, &p->sounds[level]);
+                SBVoice *v = sb_trigger(st, &p->sounds[level], busGain);
                 if (v) sb_mix_voice(st, v, offset, frameCount);
             }
 

@@ -3,6 +3,7 @@ import Observation
 import AVFoundation
 import QuartzCore
 import OSLog
+import SelahBeatAudioC
 
 #if os(iOS)
 import UIKit
@@ -42,10 +43,30 @@ public final class MetronomeController {
         }
     }
 
+    /// The subdivision picker is a preset for the mix busses.
+    ///
+    /// The click grid is always sixteenths, so picking a subdivision simply
+    /// unmutes the layers it implies. The busses remain independently
+    /// adjustable afterwards.
     public var subdivision: Subdivision = .quarter {
         didSet {
             guard subdivision != oldValue else { return }
             regeneratePattern()
+            applySubdivisionPreset()
+        }
+    }
+
+    private func applySubdivisionPreset() {
+        switch subdivision {
+        case .quarter:
+            eighthGain = 0
+            sixteenthGain = 0
+        case .eighth, .triplet:
+            if eighthGain == 0 { eighthGain = 1 }
+            sixteenthGain = 0
+        case .sixteenth:
+            if eighthGain == 0 { eighthGain = 1 }
+            if sixteenthGain == 0 { sixteenthGain = 1 }
         }
     }
 
@@ -54,6 +75,48 @@ public final class MetronomeController {
             guard timbre != oldValue else { return }
             engine.setTimbre(timbre)
         }
+    }
+
+    /// Mix busses, 0...2. Independent of masterGain, which scales everything.
+    ///
+    /// Accent covers both the downbeat and any hand-accented tick, since they
+    /// serve the same purpose: telling you where you are in the bar.
+    public var accentGain: Double = 1.0 {
+        didSet {
+            guard accentGain != oldValue else { return }
+            engine.setLevelGain(accentGain, for: SB_LEVEL_DOWNBEAT)
+            engine.setLevelGain(accentGain, for: SB_LEVEL_ACCENT)
+        }
+    }
+
+    public var quarterGain: Double = 1.0 {
+        didSet {
+            guard quarterGain != oldValue else { return }
+            engine.setLevelGain(quarterGain, for: SB_LEVEL_QUARTER)
+        }
+    }
+
+    public var eighthGain: Double = 1.0 {
+        didSet {
+            guard eighthGain != oldValue else { return }
+            engine.setLevelGain(eighthGain, for: SB_LEVEL_EIGHTH)
+        }
+    }
+
+    public var sixteenthGain: Double = 1.0 {
+        didSet {
+            guard sixteenthGain != oldValue else { return }
+            engine.setLevelGain(sixteenthGain, for: SB_LEVEL_SIXTEENTH)
+        }
+    }
+
+    /// Pushes every bus to the engine, for use after loading saved settings.
+    public func applyLevelGains() {
+        engine.setLevelGain(accentGain, for: SB_LEVEL_DOWNBEAT)
+        engine.setLevelGain(accentGain, for: SB_LEVEL_ACCENT)
+        engine.setLevelGain(quarterGain, for: SB_LEVEL_QUARTER)
+        engine.setLevelGain(eighthGain, for: SB_LEVEL_EIGHTH)
+        engine.setLevelGain(sixteenthGain, for: SB_LEVEL_SIXTEENTH)
     }
 
     public var masterGain: Double = 0.8 {
@@ -102,6 +165,7 @@ public final class MetronomeController {
 
     /// Called from press-down, not press-up. See InstantButtonStyle.
     public func start() {
+        stoppedByRouteChange = false
         engine.start()
         isRunning = true
         setIdleTimerDisabled(true)
@@ -292,11 +356,22 @@ public final class MetronomeController {
         #endif
     }
 
+    /// True when the transport was stopped by a device or route change rather
+    /// than by the user, so the UI can say why.
+    public private(set) var stoppedByRouteChange = false
+
     private func handleConfigurationChange() {
         log.notice("Audio configuration changed; rebuilding graph")
+        let wasRunning = isRunning
         engine.handleConfigurationChange()
         isRunning = engine.isRunning
+        stoppedByRouteChange = wasRunning && !isRunning
+        setIdleTimerDisabled(isRunning)
         refreshDiagnostics()
+    }
+
+    public func acknowledgeRouteChange() {
+        stoppedByRouteChange = false
     }
 
     #if os(iOS)

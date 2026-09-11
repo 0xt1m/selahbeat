@@ -55,20 +55,26 @@ func run() async {
     let startLatency = (firstTickAt - t0) * 1000
     print("first tick after Start: \(String(format: "%.2f", startLatency)) ms (polling resolution ~0.2 ms)")
 
-    // Let it run two seconds at 120 BPM and count ticks: expect ~4.
+    // Two seconds at 120 BPM is four beats. The click grid is sixteenths, so
+    // that is four ticks per beat - most of them silent, because the eighth and
+    // sixteenth mix busses start muted. Scheduling is what is being checked
+    // here, not audibility.
+    let ticksPerBeat = controller.pattern.ticksPerBeat
+    let expectedTicks = 4 * ticksPerBeat
     let countBefore = sb_last_tick_index(controller)
     try? await Task.sleep(for: .seconds(2))
     let countAfter = sb_last_tick_index(controller)
-    let ticks = countAfter - countBefore
+    let ticks = Int(countAfter - countBefore)
     controller.stop()
 
-    print("ticks in 2 s @120  : \(ticks) (expected ~4)")
+    print("grid               : \(ticksPerBeat) ticks per beat")
+    print("ticks in 2 s @120  : \(ticks) (expected ~\(expectedTicks))")
 
     controller.refreshDiagnostics()
     print("peak render time   : \(String(format: "%.0f", controller.diagnostics.maxRenderMicros)) \u{00B5}s")
     print("render load        : \(String(format: "%.2f", controller.diagnostics.renderLoad * 100))%")
 
-    let ok = ticks >= 3 && ticks <= 5 && startLatency < 60
+    let ok = abs(ticks - expectedTicks) <= 1 && startLatency < 60
     print(String(repeating: "-", count: 46))
     print(ok ? "PASS" : "FAIL")
     exit(ok ? 0 : 1)

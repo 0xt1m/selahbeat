@@ -13,6 +13,12 @@ public final class AppSettings {
         public var timbre: ClickTimbre = .woodblock
         public var subdivision: Subdivision = .quarter
         public var masterGain: Double = 0.8
+        public var accentGain: Double = 1.0
+        public var quarterGain: Double = 1.0
+        // Off by default: a metronome should start as a plain pulse. Unmuting
+        // a bus adds that layer between the notes above it.
+        public var eighthGain: Double = 0.0
+        public var sixteenthGain: Double = 0.0
         public var countInBars: Int = 0
         public var bpmRoundsToWhole: Bool = true
         public var allowsOtherAudio: Bool = false

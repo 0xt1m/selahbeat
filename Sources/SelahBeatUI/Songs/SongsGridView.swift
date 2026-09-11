@@ -138,6 +138,13 @@ public struct SongsGridView: View {
                 toastMessage = message
             }
             Button("Edit\u{2026}") { editing = song }
+            // Opens the editor on the copy, since the reason to duplicate is
+            // almost always to change something about it.
+            Button("Duplicate\u{2026}") {
+                if let copy = model.library.duplicateSong(song.id) {
+                    editing = copy
+                }
+            }
             Divider()
             Button("Delete", role: .destructive) { model.library.deleteSong(song.id) }
         }

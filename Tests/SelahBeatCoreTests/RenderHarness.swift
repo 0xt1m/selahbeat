@@ -50,7 +50,8 @@ final class RenderHarness {
 
     /// Publishes params using unit impulses, so every onset is exactly one
     /// non-zero sample and its frame index is unambiguous.
-    func publish(framesPerTick: Double, pattern: [UInt8]) {
+    func publish(framesPerTick: Double, pattern: [UInt8],
+                 ticksPerBeat: Int = 1, levelGains: [Float]? = nil) {
         var sounds: [SBSoundRef] = []
         for level in 0..<Int(SB_ACCENT_LEVELS) {
             sounds.append(SBSoundRef(
@@ -59,15 +60,20 @@ final class RenderHarness {
                 gain: 1.0
             ))
         }
+        var gains = levelGains ?? [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
         pattern.withUnsafeBufferPointer { patternPtr in
             sounds.withUnsafeMutableBufferPointer { soundsPtr in
-                sb_publish_params(
-                    state,
-                    framesPerTick,
-                    UInt32(pattern.count),
-                    patternPtr.baseAddress,
-                    soundsPtr.baseAddress
-                )
+                gains.withUnsafeMutableBufferPointer { gainsPtr in
+                    sb_publish_params(
+                        state,
+                        framesPerTick,
+                        UInt32(pattern.count),
+                        UInt32(ticksPerBeat),
+                        patternPtr.baseAddress,
+                        soundsPtr.baseAddress,
+                        gainsPtr.baseAddress
+                    )
+                }
             }
         }
     }

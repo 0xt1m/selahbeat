@@ -40,6 +40,9 @@ public struct AddSongSheet: View {
             }
         }
         .onAppear { searchFocused = true }
+        // Refresh on open rather than waiting for the background window: this
+        // is the moment a corrected tempo actually matters.
+        .task { await model.refreshCatalogNow() }
     }
 
     private var searchField: some View {
@@ -76,7 +79,8 @@ public struct AddSongSheet: View {
                             bpm: song.defaultBPM,
                             signature: song.defaultTimeSignature,
                             key: song.defaultKey,
-                            badge: song.origin.isCatalog ? nil : "custom"
+                            badge: song.origin.isCatalog ? nil : "custom",
+                            note: nil
                         ) {
                             add(song)
                         }
@@ -92,7 +96,8 @@ public struct AddSongSheet: View {
                             bpm: entry.bpm,
                             signature: entry.timeSignature,
                             key: entry.musicalKey,
-                            badge: nil
+                            badge: nil,
+                            note: yoursNote(for: entry)
                         ) {
                             add(model.importCatalogSong(entry))
                         }
@@ -144,6 +149,16 @@ public struct AddSongSheet: View {
         .buttonStyle(.plain)
     }
 
+    /// Says plainly what tapping this row will do when a copy already exists,
+    /// so replacing a saved tempo is never a surprise.
+    private func yoursNote(for entry: CatalogSong) -> String? {
+        guard let mine = results.localBPMForCatalogID[entry.id] else { return nil }
+        if Int(mine) == Int(entry.bpm) {
+            return "You already have a copy \u{2014} this adds another"
+        }
+        return "You have a copy at \(Int(mine)) BPM \u{2014} this adds another"
+    }
+
     private func sectionHeader(_ text: String) -> some View {
         Text(text.uppercased())
             .font(.system(size: 11, weight: .bold))
@@ -161,6 +176,7 @@ public struct AddSongSheet: View {
         signature: TimeSignature,
         key: MusicalKey?,
         badge: String?,
+        note: String?,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -181,6 +197,11 @@ public struct AddSongSheet: View {
                     }
                     if let artist {
                         Text(artist).font(.system(size: 12)).foregroundStyle(Theme.secondaryText)
+                    }
+                    if let note {
+                        Text(note)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.accent.opacity(0.9))
                     }
                 }
                 Spacer()
@@ -205,15 +226,31 @@ public struct AddSongSheet: View {
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 10) {
             if !model.network.isOnline {
                 Label("Offline \u{2014} showing saved songs", systemImage: "wifi.slash")
                     .font(.caption)
                     .foregroundStyle(Theme.secondaryText)
-            } else if model.catalog.count > 0 {
+            } else if model.isSyncingCatalog {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Updating catalog\u{2026}")
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.secondaryText)
+            } else {
                 Text("\(model.catalog.count) songs in catalog")
                     .font(.caption)
                     .foregroundStyle(Theme.secondaryText)
+                Button {
+                    Task { await model.refreshCatalogNow() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.accent)
+                .help("Check the server for updated tempos")
             }
             Spacer()
             Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)

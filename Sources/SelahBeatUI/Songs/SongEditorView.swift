@@ -38,9 +38,19 @@ public struct SongEditorView: View {
 
                 Section("Tempo") {
                     HStack(spacing: 14) {
-                        Text("\(Int(draft.defaultBPM))")
-                            .font(Theme.tempoFont(size: 34))
-                            .frame(minWidth: 74, alignment: .leading)
+                        // Typed entry: most of the time you already know the
+                        // tempo, and typing beats holding a stepper.
+                        TextField("BPM", value: $draft.defaultBPM, format: .number)
+                            #if os(iOS)
+                            .keyboardType(.numberPad)
+                            #endif
+                            .textFieldStyle(.roundedBorder)
+                            .font(Theme.tempoFont(size: 24))
+                            .frame(width: 92)
+                            .onChange(of: draft.defaultBPM) { _, newValue in
+                                let clamped = Song.clampBPM(newValue)
+                                if clamped != newValue { draft.defaultBPM = clamped }
+                            }
                         Stepper("", value: $draft.defaultBPM, in: Song.minBPM...Song.maxBPM, step: 1)
                             .labelsHidden()
                         InstantButton {

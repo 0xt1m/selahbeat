@@ -26,19 +26,24 @@ extern "C" {
 // MARK: - Limits
 
 #define SB_MAX_TICKS_PER_BAR   64
-#define SB_ACCENT_LEVELS        5   // see SBAccentLevel
+#define SB_ACCENT_LEVELS        6   // see SBAccentLevel
 #define SB_PARAM_SLOTS          3
 #define SB_MAX_VOICES           8
 #define SB_MAX_RENDER_FRAMES 8192   // scratch buffer size; larger buffers are refused
 #define SB_MAX_TICKS_PER_RENDER 32  // burst guard, see SBRender.c
 
-/// Which sound a tick plays. Index into SBClickParams.sounds.
+/// Which sound a tick plays, and which mix bus it is scaled by.
+///
+/// Eighths and sixteenths are separate levels rather than one "subdivision"
+/// so each can have its own volume: a drummer usually wants sixteenths well
+/// under the eighths, and both under the beat.
 typedef enum {
-    SB_LEVEL_SILENT      = 0,   // muted tick
-    SB_LEVEL_DOWNBEAT    = 1,
-    SB_LEVEL_ACCENT      = 2,
-    SB_LEVEL_BEAT        = 3,
-    SB_LEVEL_SUBDIVISION = 4,
+    SB_LEVEL_SILENT    = 0,   // muted tick
+    SB_LEVEL_DOWNBEAT  = 1,
+    SB_LEVEL_ACCENT    = 2,
+    SB_LEVEL_QUARTER   = 3,
+    SB_LEVEL_EIGHTH    = 4,
+    SB_LEVEL_SIXTEENTH = 5,
 } SBAccentLevel;
 
 // MARK: - Sounds
@@ -58,8 +63,15 @@ typedef struct {
 typedef struct {
     double     framesPerTick;
     uint32_t   ticksPerBar;
+    /// Ticks per counted beat. The render loop needs it to work out what a
+    /// tick *naturally* is, so an accented tick can fall back to its own
+    /// layer when the accent bus is muted.
+    uint32_t   ticksPerBeat;
     uint8_t    pattern[SB_MAX_TICKS_PER_BAR];   // SBAccentLevel per tick
     SBSoundRef sounds[SB_ACCENT_LEVELS];
+    /// Per-level mix busses, 0...2. Applied on top of each sound's own gain so
+    /// the balance can be changed live without re-synthesising anything.
+    float      levelGain[SB_ACCENT_LEVELS];
     uint64_t   generation;
 } SBClickParams;
 
@@ -152,8 +164,10 @@ void sb_preview(SBEngineState *st, int32_t level);
 void sb_publish_params(SBEngineState *st,
                        double framesPerTick,
                        uint32_t ticksPerBar,
+                       uint32_t ticksPerBeat,
                        const uint8_t *pattern,
-                       const SBSoundRef *sounds);
+                       const SBSoundRef *sounds,
+                       const float *levelGain);
 
 // MARK: - Render (audio thread — REAL-TIME, see THE RULE above)
 

@@ -39,19 +39,22 @@ public struct CatalogSong: Codable, Hashable, Sendable, Identifiable {
     public var timeSignature: TimeSignature { TimeSignature(beats: beats, noteValue: noteValue) }
     public var musicalKey: MusicalKey? { key.flatMap(MusicalKey.parse) }
 
-    /// Copies a catalog entry into the local library, where it becomes a
-    /// first-class offline song.
+    /// Copies a catalog entry into the local library as a brand new song.
+    ///
+    /// The new song gets its own local identity rather than the catalog slug,
+    /// so adding the same catalog entry twice produces two independent songs
+    /// and neither can ever be altered by the other. Provenance is kept in
+    /// `origin`, which is metadata only.
     public func toSong() -> Song {
         Song(
-            id: songID,
+            id: .local(),
             title: title,
             artist: artist,
             defaultBPM: bpm,
             defaultTimeSignature: timeSignature,
             defaultKey: musicalKey,
             origin: .catalog(catalogID: id, revision: revision, fetchedAt: Date()),
-            notes: notes,
-            isUserModified: false
+            notes: notes
         )
     }
 }

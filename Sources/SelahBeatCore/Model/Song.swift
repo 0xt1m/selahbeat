@@ -15,8 +15,12 @@ public enum SongOrigin: Codable, Hashable, Sendable {
     }
 }
 
-/// A song in the user's local library. Everything here is offline-first: once
-/// a song is in the library it never needs the network again.
+/// A song in the user's local library.
+///
+/// Once a song is here it is the user's, permanently. The server catalog is a
+/// lookup source for tempos you don't know - it never reaches back in and
+/// changes a song you have already added. If the catalog later revises a
+/// tempo, that only affects what a future search suggests.
 public struct Song: Identifiable, Codable, Hashable, Sendable {
     public var id: SongID
     public var title: String
@@ -28,9 +32,6 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
     public var defaultKey: MusicalKey?
     public var origin: SongOrigin
     public var notes: String?
-    /// Set the moment the user edits an imported song, so a later catalog
-    /// correction can never silently overwrite a deliberate local change.
-    public var isUserModified: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -43,7 +44,6 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         defaultKey: MusicalKey? = nil,
         origin: SongOrigin = .custom,
         notes: String? = nil,
-        isUserModified: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -55,7 +55,6 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         self.defaultKey = defaultKey
         self.origin = origin
         self.notes = notes
-        self.isUserModified = isUserModified
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

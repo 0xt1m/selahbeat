@@ -222,6 +222,16 @@ struct ServiceRow: View {
         }
         .contextMenu {
             Button("Load into transport") { model.metronome.load(resolved, serviceID: serviceID) }
+            // Swaps this placement onto a fresh copy, so retuning it here
+            // cannot disturb the same song in another service.
+            Button("Duplicate song for this service") {
+                if let copy = model.library.duplicateSong(resolved.song.id) {
+                    var item = resolved.item
+                    item.songID = copy.id
+                    model.library.updateItem(item, in: serviceID)
+                    onToast("Duplicated \(copy.title)")
+                }
+            }
             AddToServiceMenu(
                 model: model,
                 songID: resolved.song.id,

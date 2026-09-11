@@ -1,29 +1,35 @@
 import Foundation
 import OSLog
 
-/// Pulls catalog deltas and reconciles them against already-imported songs.
+/// Keeps the local copy of the shared catalog up to date.
 ///
-/// Never blocks launch and never surfaces an error dialog — a metronome that
-/// interrupts a service with a network alert is worse than one that is simply
-/// out of date.
+/// The catalog is a lookup source and nothing more. Syncing refreshes what a
+/// search will *suggest*; it never modifies a song already in the user's
+/// library. A tempo corrected on the server changes what the next search
+/// offers, and leaves every phone that already added that song alone.
+///
+/// Never blocks launch and never surfaces an error dialog - a metronome that
+/// interrupts a service with a network alert is worse than one that is out of
+/// date.
 @MainActor
 public final class CatalogSync {
     private let service: CatalogServing
     private let cache: CatalogCache
-    private let library: LibraryStore
     private let log = Logger(subsystem: "app.selahbeat", category: "catalog-sync")
 
     public private(set) var isSyncing = false
     public private(set) var lastError: String?
-    /// Catalog corrections to songs the user has edited, awaiting their call.
-    public private(set) var pendingUpdates: [SongID: CatalogSong] = [:]
 
-    private let minimumInterval: TimeInterval = 6 * 3600
+    /// How stale the catalog may be before a background sync runs.
+    ///
+    /// Six hours was far too long: a tempo corrected in the admin site would
+    /// not reach the app for most of a day, which is useless when you are
+    /// fixing it because a service is about to start.
+    private let minimumInterval: TimeInterval = 15 * 60
 
-    public init(service: CatalogServing, cache: CatalogCache, library: LibraryStore) {
+    public init(service: CatalogServing, cache: CatalogCache) {
         self.service = service
         self.cache = cache
-        self.library = library
     }
 
     public func syncIfStale() async {
@@ -38,55 +44,12 @@ public final class CatalogSync {
 
         do {
             let delta = try await service.fetchDelta(since: cache.revision)
-            let upserts = cache.apply(delta: delta)
-            reconcile(upserts)
-            for id in delta.deletes {
-                // A server delete never removes the user's copy; it only leaves
-                // the search corpus.
-                pendingUpdates.removeValue(forKey: .catalog(id))
-            }
+            cache.apply(delta: delta)
             lastError = nil
             log.info("Catalog synced to revision \(self.cache.revision)")
         } catch {
             lastError = error.localizedDescription
             log.notice("Catalog sync failed (offline is fine): \(error.localizedDescription)")
         }
-    }
-
-    /// Free corrections for untouched songs; an explicit prompt for edited ones.
-    private func reconcile(_ upserts: [CatalogSong]) {
-        for incoming in upserts {
-            let id = incoming.songID
-            guard var existing = library.song(id), existing.origin.isCatalog else { continue }
-
-            if existing.isUserModified {
-                pendingUpdates[id] = incoming
-                continue
-            }
-
-            existing.title = incoming.title
-            existing.artist = incoming.artist
-            existing.defaultBPM = Song.clampBPM(incoming.bpm)
-            existing.defaultTimeSignature = incoming.timeSignature
-            existing.defaultKey = incoming.musicalKey
-            existing.origin = .catalog(catalogID: incoming.id, revision: incoming.revision, fetchedAt: Date())
-            // Bypass updateSong so this doesn't count as a user edit.
-            library.applyCatalogRefresh(existing)
-        }
-    }
-
-    /// The user accepted a pending catalog correction.
-    public func applyPendingUpdate(for id: SongID) {
-        guard let incoming = pendingUpdates[id], var existing = library.song(id) else { return }
-        existing.defaultBPM = Song.clampBPM(incoming.bpm)
-        existing.defaultTimeSignature = incoming.timeSignature
-        existing.defaultKey = incoming.musicalKey
-        existing.origin = .catalog(catalogID: incoming.id, revision: incoming.revision, fetchedAt: Date())
-        library.applyCatalogRefresh(existing)
-        pendingUpdates.removeValue(forKey: id)
-    }
-
-    public func dismissPendingUpdate(for id: SongID) {
-        pendingUpdates.removeValue(forKey: id)
     }
 }

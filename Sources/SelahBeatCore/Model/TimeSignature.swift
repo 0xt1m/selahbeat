@@ -31,6 +31,9 @@ public struct TimeSignature: Hashable, Codable, Sendable {
         .fourFour,
         .threeFour,
         TimeSignature(beats: 2, noteValue: 4),
+        // One beat per bar: every click is a downbeat. Useful for counting in
+        // a free section, or for practising against a single pulse.
+        TimeSignature(beats: 1, noteValue: 4),
         .sixEight,
         TimeSignature(beats: 12, noteValue: 8),
         TimeSignature(beats: 5, noteValue: 4),

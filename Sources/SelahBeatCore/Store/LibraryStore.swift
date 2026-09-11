@@ -110,21 +110,6 @@ public final class LibraryStore {
     public func updateSong(_ song: Song) {
         var stored = song
         stored.updatedAt = Date()
-        // Editing an imported song means a later catalog correction must never
-        // silently overwrite the change.
-        if stored.origin.isCatalog, let existing = songs[song.id], existing != stored {
-            stored.isUserModified = true
-        }
-        songs[stored.id] = stored
-        index.update(stored)
-        saveLibrary()
-    }
-
-    /// Applies a server-side catalog correction WITHOUT flagging the song as
-    /// user-modified — that flag is what protects deliberate local edits.
-    public func applyCatalogRefresh(_ song: Song) {
-        var stored = song
-        stored.updatedAt = Date()
         songs[stored.id] = stored
         index.update(stored)
         saveLibrary()
@@ -141,6 +126,21 @@ public final class LibraryStore {
         }
         saveLibrary()
         saveServices()
+    }
+
+    /// Copies a song into a new, independent song.
+    ///
+    /// Keeps the title as-is rather than appending "copy": two songs sharing a
+    /// name and differing in tempo is a supported arrangement, not an accident.
+    /// Callers generally open the editor on the result so it can be retuned.
+    @discardableResult
+    public func duplicateSong(_ id: SongID) -> Song? {
+        guard let original = songs[id] else { return nil }
+        var copy = original
+        copy.id = .local()
+        copy.createdAt = Date()
+        copy.updatedAt = Date()
+        return addSong(copy)
     }
 
     public func noteUse(_ id: SongID) {

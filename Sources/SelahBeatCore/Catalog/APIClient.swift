@@ -32,6 +32,10 @@ public struct APIClient: CatalogServing {
         guard let url = components?.url else { throw URLError(.badURL) }
 
         var req = URLRequest(url: url)
+        // The catalog endpoint sets a short max-age for crowds of simultaneous
+        // launches, but an explicit refresh must never be answered from the
+        // local cache - that is exactly the staleness we are trying to fix.
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         if let token = await auth.token() {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }

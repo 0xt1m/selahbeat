@@ -46,6 +46,11 @@ public final class AppModel {
         metronome.timbre = settings.values.timbre
         metronome.subdivision = settings.values.subdivision
         metronome.masterGain = settings.values.masterGain
+        metronome.accentGain = settings.values.accentGain
+        metronome.quarterGain = settings.values.quarterGain
+        metronome.eighthGain = settings.values.eighthGain
+        metronome.sixteenthGain = settings.values.sixteenthGain
+        metronome.applyLevelGains()
         metronome.refreshDiagnostics()
 
         #if DEBUG
@@ -53,11 +58,7 @@ public final class AppModel {
         #endif
 
         if let baseURL = settings.serverBaseURL {
-            sync = CatalogSync(
-                service: APIClient(baseURL: baseURL),
-                cache: catalog,
-                library: library
-            )
+            sync = CatalogSync(service: APIClient(baseURL: baseURL), cache: catalog)
         }
     }
 
@@ -77,6 +78,10 @@ public final class AppModel {
         settings.values.timbre = metronome.timbre
         settings.values.subdivision = metronome.subdivision
         settings.values.masterGain = metronome.masterGain
+        settings.values.accentGain = metronome.accentGain
+        settings.values.quarterGain = metronome.quarterGain
+        settings.values.eighthGain = metronome.eighthGain
+        settings.values.sixteenthGain = metronome.sixteenthGain
     }
 
     public func flush() async {
@@ -115,29 +120,59 @@ public final class AppModel {
 
     public struct SearchResults: Sendable {
         public var library: [Song] = []
-        /// Catalog entries the user has not already imported.
         public var catalog: [CatalogSong] = []
+        /// For catalog entries the user already has, the tempo of their own
+        /// copy. Lets the UI explain why the two rows disagree.
+        public var localBPMForCatalogID: [String: Double] = [:]
+
         public var isEmpty: Bool { library.isEmpty && catalog.isEmpty }
     }
 
-    /// Merged, synchronous, offline. Catalog rows the user already owns are
-    /// dropped so the same song never appears twice.
+    /// Merged, synchronous, offline.
+    ///
+    /// A song you already have and the catalog's version of it are shown as
+    /// separate rows under their own headings. They are genuinely different
+    /// things now that the catalog never writes to your library: yours is what
+    /// you will play, the catalog's is what the server currently suggests.
     public func search(_ query: String) -> SearchResults {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
             return SearchResults(library: library.recentSongs, catalog: [])
         }
         let local = library.search(query, limit: 25)
-        let owned = Set(local.map(\.id))
-        let remote = catalog.search(query, limit: 25).filter { !owned.contains($0.songID) }
-        return SearchResults(library: local, catalog: remote)
+        let remote = catalog.search(query, limit: 25)
+
+        // Provenance now lives in `origin`, since library songs carry their own
+        // local identity rather than the catalog slug.
+        var localBPM: [String: Double] = [:]
+        for song in local {
+            if let slug = song.origin.catalogID {
+                localBPM[slug] = song.defaultBPM
+            }
+        }
+        return SearchResults(library: local, catalog: remote, localBPMForCatalogID: localBPM)
     }
 
-    /// Imports a catalog song into the library so it works offline forever after.
+    /// Adds a catalog entry to the library as a new, independent song.
+    ///
+    /// Never looks for or modifies an existing copy. Every song in the library
+    /// is its own object: adding "Praise" from the catalog when you already
+    /// have a "Praise" gives you a second one at the server's tempo, and your
+    /// original is untouched.
     @discardableResult
     public func importCatalogSong(_ entry: CatalogSong) -> Song {
-        if let existing = library.song(entry.songID) { return existing }
-        return library.addSong(entry.toSong())
+        library.addSong(entry.toSong())
     }
+
+    /// Forces a catalog refresh, ignoring the staleness window.
+    ///
+    /// Called when the add-song sheet opens: that is the moment a stale tempo
+    /// actually costs the user something.
+    public func refreshCatalogNow() async {
+        guard network.isOnline else { return }
+        await sync?.sync()
+    }
+
+    public var isSyncingCatalog: Bool { sync?.isSyncing ?? false }
 
     // MARK: - Service navigation
 
