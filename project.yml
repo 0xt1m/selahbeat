@@ -25,6 +25,9 @@ settings:
     SWIFT_STRICT_CONCURRENCY: targeted
 
 packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
   # The local package holds everything cross-platform, so `swift test` can run
   # the whole core from the command line with no Xcode and no simulator.
   SelahBeatCore:
@@ -52,6 +55,8 @@ targets:
     dependencies:
       - package: SelahBeatCore
         product: SelahBeatUI
+      - package: Sparkle
+        product: Sparkle
 
   SelahBeat-iOS:
     type: application

@@ -46,16 +46,72 @@ jobs:
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          set -euo pipefail
+
+          if [ -z "${MACOS_CERT_P12_BASE64:-}" ]; then
+            echo "::error::MACOS_CERT_P12_BASE64 is empty. Set it with:"
+            echo "::error::  base64 -i cert.p12 | gh secret set MACOS_CERT_P12_BASE64"
+            exit 1
+          fi
+
+          # openssl base64 -A is used rather than `base64 --decode` because it
+          # tolerates the line wrapping that `base64 -i` produces by default.
+          printf '%s' "$MACOS_CERT_P12_BASE64" | tr -d '[:space:]' \
+            | openssl base64 -d -A > /tmp/cert.p12 || {
+              echo "::error::Secret is not valid base64. Re-export it with:"
+              echo "::error::  base64 -i cert.p12 | pbcopy"
+              exit 1
+            }
+
+          SIZE=$(stat -f%z /tmp/cert.p12)
+          echo "Decoded certificate: ${SIZE} bytes"
+          if [ "$SIZE" -lt 500 ]; then
+            echo "::error::Decoded file is only ${SIZE} bytes - that is not a .p12."
+            echo "::error::The secret probably holds a file path or truncated text."
+            exit 1
+          fi
+
+          # Confirm it is really a PKCS#12 container, and that the password
+          # opens it, before handing it to `security import` - which reports
+          # every one of these failures as the same opaque message.
+          if ! openssl pkcs12 -in /tmp/cert.p12 -noout -passin env:MACOS_CERT_PASSWORD 2>/tmp/p12err; then
+            if grep -qi "mac verify failure\|invalid password" /tmp/p12err; then
+              echo "::error::The .p12 is valid but MACOS_CERT_PASSWORD is wrong."
+            else
+              echo "::error::Not a valid PKCS#12 file. Re-export from Keychain Access,"
+              echo "::error::expanding the certificate so the PRIVATE KEY is included."
+              sed 's/^/::error::openssl: /' /tmp/p12err
+            fi
+            exit 1
+          fi
+
+          # A .p12 with the certificate but no private key imports fine and then
+          # fails much later at codesign, so check for the key up front.
+          if ! openssl pkcs12 -in /tmp/cert.p12 -nocerts -passin env:MACOS_CERT_PASSWORD \
+                 -passout pass:x 2>/dev/null | grep -q "PRIVATE KEY"; then
+            echo "::error::This .p12 contains no private key."
+            echo "::error::In Keychain Access, expand the certificate with the triangle"
+            echo "::error::and select BOTH the certificate and the key before exporting."
+            exit 1
+          fi
+
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -t 3600 -u build.keychain
-          echo "$MACOS_CERT_P12_BASE64" | base64 --decode > /tmp/cert.p12
+
           security import /tmp/cert.p12 -k build.keychain -P "$MACOS_CERT_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/productsign
+            -f pkcs12 -T /usr/bin/codesign -T /usr/bin/productsign
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain >/dev/null
           rm /tmp/cert.p12
+
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning build.keychain
+          if ! security find-identity -v -p codesigning build.keychain | grep -q "Developer ID Application"; then
+            echo "::error::No 'Developer ID Application' identity after import."
+            exit 1
+          fi
 
       - name: Archive
         run: |
