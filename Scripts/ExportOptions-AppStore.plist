@@ -6,17 +6,25 @@
 	<string>app-store-connect</string>
 	<key>teamID</key>
 	<string>D4DDD7PH6S</string>
+	<!-- Manual signing with an explicit profile.
+	     Automatic ("cloud") signing fails here: xcodebuild insists on creating
+	     its own profile through the API rather than using one that already
+	     exists, and reports every refusal as "Cloud signing permission error"
+	     followed by "No profiles were found". Naming the profile removes that
+	     round trip entirely and makes the signing identity deterministic. -->
 	<key>signingStyle</key>
-	<string>automatic</string>
-	<!-- Uploads straight to App Store Connect rather than writing a local .ipa,
-	     so there is no separate altool/Transporter step. -->
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>app.selahbeat.SelahBeat</key>
+		<string>SelahBeat App Store</string>
+	</dict>
 	<key>destination</key>
 	<string>upload</string>
 	<key>uploadSymbols</key>
 	<true/>
-	<!-- Versions are passed explicitly on the xcodebuild command line; letting
-	     Xcode manage them would silently diverge from the git-derived build
-	     number the macOS pipeline uses. -->
 	<key>manageAppVersionAndBuildNumber</key>
 	<false/>
 </dict>
