@@ -225,13 +225,13 @@ public struct MetronomeView: View {
                     .font(.caption)
                     .foregroundStyle(Theme.secondaryText)
             }
-            Text("Tap a dot to accent, soften or mute that beat.")
+            Text("One row per beat. Tap a dot to accent, soften or mute it.")
                 .font(.caption)
                 .foregroundStyle(Theme.secondaryText)
 
-            BeatDots(controller: controller, dotSize: 22, interactive: true)
+            AccentEditor(controller: controller)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
 
             HStack(spacing: 14) {
                 TimeSignaturePicker(controller: controller)
