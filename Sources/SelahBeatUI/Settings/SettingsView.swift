@@ -16,14 +16,56 @@ public struct SettingsView: View {
                 .tabItem { Label("Sound", systemImage: "waveform") }
             DiagnosticsView(model: model)
                 .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
+            aboutTab
+                .tabItem { Label("About", systemImage: "info.circle") }
         }
         .sheetSize(width: 520, height: 400)
+    }
+
+    private var aboutTab: some View {
+        Form {
+            Section {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text(AppInfo.displayVersion)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                #if os(macOS)
+                HStack {
+                    Button("Check for Updates\u{2026}") {
+                        Task { await model.updates.check() }
+                    }
+                    .disabled(model.updates.isChecking)
+                    if model.updates.isChecking {
+                        ProgressView().controlSize(.small)
+                    } else if model.updates.availableUpdate == nil, model.updates.lastCheck != nil {
+                        Text("Up to date").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let release = model.updates.availableUpdate {
+                    Text("Version \(release.version) is available.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.accent)
+                }
+                #endif
+            } header: {
+                Text("SelahBeat")
+            } footer: {
+                Text("A metronome for worship drummers. selahbeat.com")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 
     private var generalTab: some View {
         Form {
             Section("Catalog") {
-                TextField("Server", text: Bindable(model.settings).values.serverURL)
+                LabeledTextField("Server", placeholder: "https://selahbeat.com",
+                                 text: Bindable(model.settings).values.serverURL)
                     .textContentType(.URL)
                 HStack {
                     Text("Songs cached")

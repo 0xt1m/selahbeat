@@ -52,6 +52,7 @@ public struct AddSongSheet: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 17))
                 .focused($searchFocused)
+                .keyboardDoneButton()
                 .onSubmit(addFirstResultOrCreate)
             if !query.isEmpty {
                 Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }

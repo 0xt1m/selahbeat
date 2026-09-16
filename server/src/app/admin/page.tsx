@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { isAuthenticated } from '@/lib/auth';
 import { listAllSongs, stats } from '@/lib/catalog';
-import { deleteSong, logout } from './actions';
+import { logout } from './actions';
+import { SongTable } from './SongTable';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,59 +78,24 @@ export default async function AdminPage({
         </p>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-neutral-900">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-surface text-xs uppercase tracking-wider text-neutral-500">
-            <tr>
-              <th className="px-4 py-3">Title</th>
-              <th className="px-4 py-3">Artist</th>
-              <th className="px-4 py-3 text-right">BPM</th>
-              <th className="px-4 py-3">Meter</th>
-              <th className="px-4 py-3">Key</th>
-              <th className="px-4 py-3">Tempo</th>
-              <th className="px-4 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {songs.map((song) => (
-              <tr key={song.id} className="border-t border-neutral-900 hover:bg-surface/60">
-                <td className="px-4 py-2.5 font-medium">
-                  <Link href={`/admin/song/${song.id}`} className="hover:text-accent">
-                    {song.title}
-                  </Link>
-                  <div className="text-xs text-neutral-600">{song.id}</div>
-                </td>
-                <td className="px-4 py-2.5 text-neutral-400">{song.artist ?? '—'}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{Math.round(song.bpm)}</td>
-                <td className="px-4 py-2.5 text-neutral-400">
-                  {song.beats}/{song.noteValue}
-                </td>
-                <td className="px-4 py-2.5 text-accent">{song.key ?? '—'}</td>
-                <td className="px-4 py-2.5">
-                  {song.verified ? (
-                    <span className="text-good">verified</span>
-                  ) : (
-                    <span className="text-neutral-600">estimate</span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <form action={deleteSong}>
-                    <input type="hidden" name="id" value={song.id} />
-                    <button className="text-xs text-neutral-600 hover:text-red-400">Delete</button>
-                  </form>
-                </td>
-              </tr>
-            ))}
-            {songs.length === 0 && (
-              <tr>
-                <td colSpan={7} className="px-4 py-10 text-center text-neutral-600">
-                  No songs match.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <SongTable
+        songs={songs.map((s) => ({
+          id: s.id,
+          title: s.title,
+          artist: s.artist,
+          bpm: Math.round(s.bpm),
+          beats: s.beats,
+          noteValue: s.noteValue,
+          key: s.key,
+          verified: s.verified,
+        }))}
+      />
+
+      <p className="mt-4 text-xs text-neutral-600">
+        Title, artist, tempo, meter and key are editable here - changes save when you leave the
+        cell. Open a song for its notes.
+      </p>
+
     </main>
   );
 }

@@ -60,6 +60,10 @@ public struct TransportBar: View {
 
             TapPad(controller: controller)
 
+            if controller.loadedItem != nil {
+                SaveTempoButton(model: model)
+            }
+
             if width >= Breakpoint.meter {
                 Divider().frame(height: 38)
                 TimeSignaturePicker(controller: controller)

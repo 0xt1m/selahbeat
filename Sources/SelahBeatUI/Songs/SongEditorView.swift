@@ -33,7 +33,10 @@ public struct SongEditorView: View {
 
     private func mixSlider(_ label: String, _ key: WritableKeyPath<SongMix, Double>) -> some View {
         let binding = Binding<Double>(
-            get: { draft.mix?[keyPath: key] ?? 0 },
+            // A song saved before mixes existed has none stored, and it plays
+            // at the standard one - so that is what the sliders must show.
+            // Reading a missing mix as zero made every such song look muted.
+            get: { (draft.mix ?? .standard)[keyPath: key] },
             set: { newValue in
                 var mix = draft.mix ?? .standard
                 mix[keyPath: key] = newValue
@@ -62,8 +65,8 @@ public struct SongEditorView: View {
 
             Form {
                 Section {
-                    TextField("Title", text: $draft.title)
-                    TextField("Artist (optional)", text: Binding(
+                    LabeledTextField("Title", placeholder: "Song title", text: $draft.title)
+                    LabeledTextField("Artist", placeholder: "Optional", text: Binding(
                         get: { draft.artist ?? "" },
                         set: { draft.artist = $0.isEmpty ? nil : $0 }
                     ))
@@ -116,29 +119,22 @@ public struct SongEditorView: View {
                     }
                 }
 
+                // Every song carries a mix, so there is nothing to switch
+                // on: the sliders are the mix, and Reset puts back the
+                // standard one rather than leaving the song without any.
                 Section("Click mix") {
-                    Toggle("Custom mix for this song", isOn: Binding(
-                        get: { draft.mix != nil },
-                        set: { on in
-                            // Seed from whatever is currently set up, so the
-                            // starting point is what you were just listening to.
-                            draft.mix = on ? model.metronome.currentMix : nil
-                        }
-                    ))
+                    mixSlider("Accent", \.accent)
+                    mixSlider("Quarter notes", \.quarter)
+                    mixSlider("Eighth notes", \.eighth)
+                    mixSlider("Sixteenth notes", \.sixteenth)
 
-                    if draft.mix != nil {
-                        mixSlider("Accent", \.accent)
-                        mixSlider("Quarter notes", \.quarter)
-                        mixSlider("Eighth notes", \.eighth)
-                        mixSlider("Sixteenth notes", \.sixteenth)
-
+                    HStack {
                         Button("Preview this mix") {
-                            if let mix = draft.mix { model.metronome.apply(mix) }
+                            model.metronome.apply(draft.mix ?? .standard)
                         }
-                    } else {
-                        Text("This song will use whatever the mix is set to.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Reset to default") { draft.mix = .standard }
+                            .disabled(draft.mix ?? .standard == .standard)
                     }
                 }
 
@@ -149,6 +145,9 @@ public struct SongEditorView: View {
                     ))
                 }
             }
+            // No Done bar above the keyboard here: the keyboard button in the
+            // footer below does the same job and is always on screen, so the
+            // bar would only steal a row of the sheet.
             .formStyle(.grouped)
 
             HStack {
@@ -161,6 +160,11 @@ public struct SongEditorView: View {
                     .help(uses > 0 ? "Used in \(uses) service\(uses == 1 ? "" : "s")" : "Not used in any service")
                 }
                 Spacer()
+                // Only present while the keyboard is up; the Form has no
+                // Done bar of its own because this does the same job without
+                // costing a row of the sheet.
+                KeyboardDismissButton()
+                    .padding(.trailing, 6)
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(isNew ? "Create" : "Save") {
                     onSave(draft)

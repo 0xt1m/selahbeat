@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SelahBeat}",
+            "name": "Debug AudioCheck",
+            "target": "AudioCheck",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AudioCheck"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SelahBeat}",
+            "name": "Release AudioCheck",
+            "target": "AudioCheck",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AudioCheck"
+        }
+    ]
+}

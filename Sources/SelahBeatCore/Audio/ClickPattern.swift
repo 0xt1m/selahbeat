@@ -52,23 +52,39 @@ public struct ClickPattern: Hashable, Sendable {
     /// sixteenth - rather than just "beat or not", so each can be mixed
     /// independently.
     public static func standard(for signature: TimeSignature, subdivision: Subdivision) -> ClickPattern {
-        if signature.isCompound {
-            // 6/8, 9/8, 12/8 felt in dotted-quarter pulses. The pulse is the
-            // beat; the three eighths inside it are the subdivision.
-            let pulses = signature.pulseCount
-            if subdivision == .quarter {
-                var levels = [UInt8](repeating: UInt8(SB_LEVEL_QUARTER.rawValue), count: pulses)
-                levels[0] = UInt8(SB_LEVEL_DOWNBEAT.rawValue)
-                return ClickPattern(levels: levels, ticksPerBeat: 1)
-            }
+        // Meters written over 8 click the eighth note, and the tempo means
+        // eighth notes. Every eighth sounds; the first of each group is
+        // accented, which is what makes 6/8 read as 6/8 and not as 3/4, and
+        // 7/8 as 2+2+3 rather than seven flat clicks.
+        //
+        // Before this, 7/8 clicked seven *quarters* - a bar took twice as long
+        // as it should - and 6/8 clicked only its two dotted-quarter pulses,
+        // so the same tempo number meant a different speed in every meter.
+        if signature.noteValue == 8 {
+            // Two ticks per eighth, so the sixteenth mix bus still has
+            // somewhere to sound, exactly as in the straight meters below.
+            let ticksPerBeat = 2
+            let groups = signature.eighthGrouping
             var levels: [UInt8] = []
-            for pulse in 0..<pulses {
-                levels.append(pulse == 0 ? UInt8(SB_LEVEL_DOWNBEAT.rawValue)
-                                         : UInt8(SB_LEVEL_QUARTER.rawValue))
-                levels.append(UInt8(SB_LEVEL_EIGHTH.rawValue))
-                levels.append(UInt8(SB_LEVEL_EIGHTH.rawValue))
+            var eighth = 0
+            for group in groups {
+                for positionInGroup in 0..<group {
+                    let level: SBAccentLevel
+                    if eighth == 0 {
+                        level = SB_LEVEL_DOWNBEAT          // bar start
+                    } else if positionInGroup == 0 {
+                        level = SB_LEVEL_ACCENT            // start of 2 or 3
+                    } else {
+                        level = SB_LEVEL_QUARTER           // the eighths between
+                    }
+                    levels.append(UInt8(level.rawValue))
+                    for _ in 1..<ticksPerBeat {
+                        levels.append(UInt8(SB_LEVEL_SIXTEENTH.rawValue))
+                    }
+                    eighth += 1
+                }
             }
-            return ClickPattern(levels: levels, ticksPerBeat: 3)
+            return ClickPattern(levels: levels, ticksPerBeat: ticksPerBeat)
         }
 
         // Straight meters are always laid out on a sixteenth grid, whatever
@@ -100,6 +116,9 @@ public struct ClickPattern: Hashable, Sendable {
         }
         switch ticksPerBeat {
         case 4:  return tick == 2 ? SB_LEVEL_EIGHTH : SB_LEVEL_SIXTEENTH
+        // An x/8 meter's beat is already an eighth, so what sits between two
+        // ticks of it is a sixteenth.
+        case 2:  return SB_LEVEL_SIXTEENTH
         default: return SB_LEVEL_EIGHTH
         }
     }

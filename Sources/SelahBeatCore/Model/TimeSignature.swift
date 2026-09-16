@@ -24,6 +24,35 @@ public struct TimeSignature: Hashable, Codable, Sendable {
         isCompound ? beats / 3 : beats
     }
 
+    /// How the eighths of an x/8 bar are grouped, which is what the accents
+    /// mark: 6/8 as 3+3, 7/8 as 2+2+3, 5/8 as 2+3.
+    ///
+    /// Threes where they divide evenly; otherwise twos first and a three at
+    /// the end, which is how these meters are almost always counted.
+    public var eighthGrouping: [Int] {
+        guard noteValue == 8 else { return Array(repeating: 1, count: beats) }
+        if beats % 3 == 0 { return Array(repeating: 3, count: beats / 3) }
+
+        var groups: [Int] = []
+        var remaining = beats
+        while remaining % 3 != 0 && remaining > 3 {
+            groups.append(2)
+            remaining -= 2
+        }
+        if remaining % 3 == 0 {
+            groups.append(contentsOf: Array(repeating: 3, count: remaining / 3))
+        } else if remaining > 0 {
+            groups.append(remaining)
+        }
+        return groups
+    }
+
+    /// The pulse a bar is felt in, for display. An x/8 meter clicks eighths,
+    /// so what a drummer feels is the group count: 6/8 in 2, 7/8 in 3.
+    public var groupCount: Int {
+        noteValue == 8 ? eighthGrouping.count : beats
+    }
+
     public var display: String { "\(beats)/\(noteValue)" }
 
     /// Common meters, in the order a worship drummer is likely to want them.

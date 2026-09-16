@@ -108,6 +108,8 @@ public struct MetronomeView: View {
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(Theme.accent)
                     }
+                    SaveTempoButton(model: model)
+                        .padding(.top, 2)
                 }
             }
 

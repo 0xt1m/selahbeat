@@ -9,7 +9,6 @@ public struct ServiceDetailView: View {
 
     @State private var showingAddSong = false
     @State private var editingItemID: UUID?
-    @State private var editingSong: Song?
     @State private var renaming = false
     @State private var draftName = ""
     @State private var toastMessage: String?
@@ -32,22 +31,10 @@ public struct ServiceDetailView: View {
             }
         }
         .background(Theme.surface)
+        .keyboardDoneButton()
         .toast($toastMessage)
         .sheet(isPresented: $showingAddSong) {
             AddSongSheet(model: model, serviceID: serviceID)
-        }
-        // The same editor the library uses, so a song can be changed properly
-        // from wherever you happen to be looking at it.
-        .sheet(item: $editingSong) { song in
-            SongEditorView(model: model, song: song) { saved in
-                model.library.updateSong(saved)
-                // Keep the transport in step if this song is loaded.
-                if model.metronome.loadedItem?.song.id == saved.id,
-                   let item = model.library.service(serviceID)?.items.first(where: { $0.songID == saved.id }),
-                   let refreshed = model.library.resolved(item) {
-                    model.metronome.load(refreshed, serviceID: serviceID)
-                }
-            }
         }
     }
 
@@ -93,17 +80,18 @@ public struct ServiceDetailView: View {
 
     private var list: some View {
         List {
-            ForEach(items) { resolved in
+            ForEach(Array(items.enumerated()), id: \.element.id) { position, resolved in
                 ServiceRow(
                     model: model,
                     serviceID: serviceID,
                     resolved: resolved,
+                    position: position + 1,
                     isLoaded: model.metronome.loadedItem?.item.id == resolved.item.id,
                     isEditing: editingItemID == resolved.item.id,
                     toggleEditing: {
                         editingItemID = editingItemID == resolved.item.id ? nil : resolved.item.id
                     },
-                    onEditSong: { editingSong = resolved.song },
+                    onEditSong: { model.editingSong = resolved.song },
                     onToast: { toastMessage = $0 }
                 )
                 .listRowBackground(Color.clear)
@@ -120,6 +108,17 @@ public struct ServiceDetailView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        #if os(iOS)
+        .onKeyPress(phases: .down) { press in
+            if let digit = press.characters.first?.wholeNumberValue, (0...9).contains(digit) {
+                return model.loadSong(atServicePosition: digit == 0 ? 10 : digit) ? .handled : .ignored
+            }
+            if press.characters.lowercased() == "e" {
+                return model.editLoadedSong() ? .handled : .ignored
+            }
+            return .ignored
+        }
+        #endif
     }
 
     private var emptyState: some View {
@@ -157,6 +156,8 @@ struct ServiceRow: View {
     @Bindable var model: AppModel
     let serviceID: UUID
     let resolved: ResolvedItem
+    /// 1-based, and the same number that loads this song from the keyboard.
+    let position: Int
     let isLoaded: Bool
     let isEditing: Bool
     let toggleEditing: () -> Void
@@ -166,81 +167,30 @@ struct ServiceRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
+                // Deliberately outside the tap-to-load area below: a tap
+                // gesture swallows the mouse-down the List needs to begin a
+                // reorder drag, so a handle inside it cannot be dragged.
+                Text(position <= 10 ? "\(position % 10)" : "")
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isLoaded ? Theme.accent : Theme.secondaryText)
+                    .frame(width: 14)
+                    .help("Press \(position % 10) to load this song")
+
                 Image(systemName: "line.3.horizontal")
                     .foregroundStyle(Theme.secondaryText.opacity(0.6))
                     .font(.system(size: 13))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(resolved.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(isLoaded ? Theme.accent : Theme.primaryText)
-                    if let artist = resolved.song.artist {
-                        Text(artist)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.secondaryText)
+                    .frame(width: 28, height: 36)
+                    .contentShape(Rectangle())
+                    .help("Drag to reorder")
+                #if os(macOS)
+                    .onHover { inside in
+                        if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
                     }
-                }
+                #endif
 
-                Spacer()
-
-                if let key = resolved.key {
-                    Text(key.display)
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(minWidth: 34)
-                }
-
-                HStack(spacing: 3) {
-                    Text("\(Int(resolved.bpm))")
-                        .font(Theme.tempoFont(size: 17))
-                    if resolved.hasBPMOverride {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Theme.accent)
-                    }
-                }
-                .foregroundStyle(Theme.primaryText)
-
-                Text(resolved.timeSignature.display)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.secondaryText)
-                    .frame(minWidth: 30)
-
-                Button {
-                    model.metronome.load(resolved, serviceID: serviceID)
-                } label: {
-                    Image(systemName: isLoaded ? "checkmark.circle.fill" : "arrow.up.circle")
-                        .font(.system(size: 18))
-                        .foregroundStyle(isLoaded ? Theme.running : Theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Load this song's tempo into the transport")
-
-                Button {
-                    toggleEditing()
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 14))
-                        .foregroundStyle(isEditing ? Theme.accent : Theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Key and tempo for this service")
-
-                Button {
-                    onEditSong()
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Edit the song")
+                rowContent
             }
             .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                model.metronome.load(resolved, serviceID: serviceID)
-            }
 
             if isEditing {
                 ServiceItemEditor(model: model, serviceID: serviceID, resolved: resolved)
@@ -275,6 +225,81 @@ struct ServiceRow: View {
             Button("Remove from service", role: .destructive) {
                 model.library.removeItem(resolved.item.id, from: serviceID)
             }
+        }
+    }
+
+    /// Everything except the drag handle; tapping here loads the song.
+    private var rowContent: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(resolved.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isLoaded ? Theme.accent : Theme.primaryText)
+                if let artist = resolved.song.artist {
+                    Text(artist)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+            }
+
+            Spacer()
+
+            if let key = resolved.key {
+                Text(key.display)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(minWidth: 34)
+            }
+
+            HStack(spacing: 3) {
+                Text("\(Int(resolved.bpm))")
+                    .font(Theme.tempoFont(size: 17))
+                if resolved.hasBPMOverride {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .foregroundStyle(Theme.primaryText)
+
+            Text(resolved.timeSignature.display)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.secondaryText)
+                .frame(minWidth: 30)
+
+            Button {
+                model.metronome.load(resolved, serviceID: serviceID)
+            } label: {
+                Image(systemName: isLoaded ? "checkmark.circle.fill" : "arrow.up.circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(isLoaded ? Theme.running : Theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Load this song's tempo into the transport")
+
+            Button {
+                toggleEditing()
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isEditing ? Theme.accent : Theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Key and tempo for this service")
+
+            Button {
+                onEditSong()
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Edit the song")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            model.metronome.load(resolved, serviceID: serviceID)
         }
     }
 }
@@ -332,6 +357,9 @@ struct ServiceItemEditor: View {
             )
             .frame(width: 56)
             .textFieldStyle(.roundedBorder)
+            #if os(iOS)
+            .keyboardType(.numberPad)
+            #endif
 
             if resolved.hasBPMOverride {
                 Button {

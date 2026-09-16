@@ -170,17 +170,59 @@ struct ReorderTests {
 
 @Suite("Meter")
 struct MeterTests {
-    @Test("6/8 is treated as two dotted-quarter pulses, not six beats")
+    @Test("6/8 clicks six eighths, accented 3+3")
     func compoundMeter() {
         let sixEight = TimeSignature.sixEight
-        #expect(sixEight.isCompound)
-        #expect(sixEight.pulseCount == 2)
+        #expect(sixEight.eighthGrouping == [3, 3])
+        #expect(sixEight.groupCount == 2)
 
-        let pattern = ClickPattern.standard(for: sixEight, subdivision: .triplet)
-        #expect(pattern.ticksPerBar == 6)
-        #expect(pattern.ticksPerBeat == 3)
-        #expect(pattern.levels[0] == 1)   // downbeat
-        #expect(pattern.levels[3] == 3)   // second pulse is a beat, not a subdivision
+        let pattern = ClickPattern.standard(for: sixEight, subdivision: .quarter)
+        #expect(pattern.ticksPerBeat == 2)
+        #expect(pattern.ticksPerBar == 12)          // six eighths, two ticks each
+
+        // Bar start, then two plain eighths, then the accent that starts the
+        // second group of three.
+        #expect(pattern.levels[0] == UInt8(SB_LEVEL_DOWNBEAT.rawValue))
+        #expect(pattern.levels[2] == UInt8(SB_LEVEL_QUARTER.rawValue))
+        #expect(pattern.levels[4] == UInt8(SB_LEVEL_QUARTER.rawValue))
+        #expect(pattern.levels[6] == UInt8(SB_LEVEL_ACCENT.rawValue))
+
+        // The tempo means eighth notes, so the eighth lands on the beat.
+        #expect(pattern.framesPerTick(bpm: 120, sampleRate: 48_000) * 2 == 24_000)
+    }
+
+    @Test("7/8 is grouped 2+2+3 and clicks eighths, not quarters")
+    func sevenEightGrouping() {
+        let sevenEight = TimeSignature(beats: 7, noteValue: 8)
+        #expect(sevenEight.eighthGrouping == [2, 2, 3])
+
+        let pattern = ClickPattern.standard(for: sevenEight, subdivision: .quarter)
+        #expect(pattern.ticksPerBar == 14)
+
+        // Accents at the top of each group: eighths 1, 3 and 5.
+        let accents = stride(from: 0, to: pattern.ticksPerBar, by: 2)
+            .map { pattern.levels[$0] }
+        #expect(accents == [
+            UInt8(SB_LEVEL_DOWNBEAT.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_ACCENT.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_ACCENT.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+            UInt8(SB_LEVEL_QUARTER.rawValue),
+        ])
+
+        // A 7/8 bar is seven eighths long: 3.5 beats, not 7.
+        let barSeconds = Double(pattern.ticksPerBar)
+            * pattern.framesPerTick(bpm: 120, sampleRate: 48_000) / 48_000
+        #expect(abs(barSeconds - 3.5) < 0.0001)
+    }
+
+    @Test("5/8 groups 2+3")
+    func fiveEightGrouping() {
+        #expect(TimeSignature(beats: 5, noteValue: 8).eighthGrouping == [2, 3])
+        #expect(TimeSignature(beats: 9, noteValue: 8).eighthGrouping == [3, 3, 3])
+        #expect(TimeSignature(beats: 11, noteValue: 8).eighthGrouping == [2, 3, 3, 3])
     }
 
     @Test("Straight meters always lay out on a sixteenth grid")
@@ -209,13 +251,12 @@ struct MeterTests {
         #expect(triplets.framesPerTick(bpm: 120, sampleRate: 48_000) * 3 == 24_000)
     }
 
-    @Test("Odd meters build a full bar")
+    @Test("5/4 keeps the quarter grid and builds a full bar")
     func oddMeter() {
-        let sevenEight = TimeSignature(beats: 7, noteValue: 8)
-        #expect(!sevenEight.isCompound)
-        let pattern = ClickPattern.standard(for: sevenEight, subdivision: .quarter)
-        #expect(pattern.ticksPerBar == 7 * 4)
-        #expect(pattern.levels.filter { $0 == UInt8(SB_LEVEL_QUARTER.rawValue) }.count == 6)
+        let fiveFour = TimeSignature(beats: 5, noteValue: 4)
+        let pattern = ClickPattern.standard(for: fiveFour, subdivision: .quarter)
+        #expect(pattern.ticksPerBar == 5 * 4)
+        #expect(pattern.levels.filter { $0 == UInt8(SB_LEVEL_QUARTER.rawValue) }.count == 4)
     }
 }
 
@@ -431,6 +472,24 @@ struct ServiceEditingTests {
 
 @Suite("Mix busses")
 struct MixBusTests {
+    @Test("A new song is saved with the standard mix")
+    func newSongsCarryTheStandardMix() {
+        let song = Song(title: "Way Maker", defaultBPM: 66)
+        #expect(song.mix == SongMix.standard)
+        // Accent and quarters at half of the slider's range, the two
+        // subdivisions muted.
+        #expect(song.mix?.accent == 1.0)
+        #expect(song.mix?.quarter == 1.0)
+        #expect(song.mix?.eighth == 0)
+        #expect(song.mix?.sixteenth == 0)
+    }
+
+    @Test("A catalog song is imported with the standard mix too")
+    func catalogImportsCarryTheStandardMix() {
+        let entry = CatalogSong(id: "praise", title: "Praise", bpm: 84)
+        #expect(entry.toSong().mix == SongMix.standard)
+    }
+
     @Test("The grid separates eighths from sixteenths")
     func sixteenthsGetTheirOwnLevel() {
         let pattern = ClickPattern.standard(for: .fourFour, subdivision: .sixteenth)

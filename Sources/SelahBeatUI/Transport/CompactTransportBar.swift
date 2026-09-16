@@ -56,11 +56,11 @@ public struct CompactTransportBar: View {
                 .padding(.top, 6)
                 .padding(.bottom, 8)
 
-            if let loaded = controller.loadedItem {
-                Text(loaded.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineLimit(1)
+            if controller.loadedItem != nil {
+                // Tapping a tempo for the song you are on is the common case,
+                // so the offer to keep it appears right where the title was.
+                SaveTempoButton(model: model, showsTitleWhenIdle: true)
+                    .padding(.horizontal, 12)
                     .padding(.bottom, 6)
             }
         }

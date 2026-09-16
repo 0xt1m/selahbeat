@@ -8,18 +8,26 @@ import SelahBeatCore
 public struct SongsGridView: View {
     @Bindable private var model: AppModel
     @State private var query = ""
-    @State private var editing: Song?
     @State private var creating: Song?
     @State private var toastMessage: String?
+    @State private var showingSettings = false
 
     public init(model: AppModel) {
         self.model = model
     }
 
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+
     private var songs: [Song] {
-        query.trimmingCharacters(in: .whitespaces).isEmpty
-            ? model.library.allSongs
-            : model.library.search(query)
+        trimmed.isEmpty ? model.library.allSongs : model.library.search(query)
+    }
+
+    /// Catalog matches, shown under their own heading while searching. Never
+    /// merged with your own songs: yours is what you will play, the server's
+    /// is only a suggestion until you add it.
+    private var catalogMatches: [CatalogSong] {
+        guard !trimmed.isEmpty else { return [] }
+        return model.search(query).catalog
     }
 
     public var body: some View {
@@ -41,22 +49,47 @@ public struct SongsGridView: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 18)
 
-                if songs.isEmpty && !query.isEmpty {
-                    Text("No songs match \u{201C}\(query)\u{201D}")
+                if songs.isEmpty && !trimmed.isEmpty {
+                    Text("Nothing in your library matches \u{201C}\(query)\u{201D}")
                         .font(.callout)
                         .foregroundStyle(Theme.secondaryText)
-                        .padding(.top, 24)
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
+                }
+
+                if !catalogMatches.isEmpty {
+                    catalogSection
                 }
             }
         }
         .background(Theme.surface)
         .toast($toastMessage)
         .navigationTitle("Library")
-        .sheet(item: $editing) { song in
-            SongEditorView(model: model, song: song) { saved in
-                model.library.updateSong(saved)
+        .task { await model.refreshCatalogNow() }
+        // iPhone has no Settings scene, so this is the way in - and the only
+        // place the version number would otherwise be invisible.
+        #if os(iOS)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showingSettings = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("Settings")
             }
         }
+        .sheet(isPresented: $showingSettings) {
+            NavigationStack {
+                SettingsView(model: model)
+                    .navigationTitle("Settings")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showingSettings = false }
+                        }
+                    }
+            }
+        }
+        #endif
         .sheet(item: $creating) { song in
             SongEditorView(model: model, song: song, isNew: true) { saved in
                 model.library.addSong(saved)
@@ -69,6 +102,7 @@ public struct SongsGridView: View {
             Image(systemName: "magnifyingglass").foregroundStyle(Theme.secondaryText)
             TextField("Search your songs", text: $query)
                 .textFieldStyle(.plain)
+                .keyboardDoneButton()
             if !query.isEmpty {
                 Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
@@ -79,6 +113,84 @@ public struct SongsGridView: View {
         .background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    private var catalogSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "cloud")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("From the song server")
+                    .font(.system(size: 12, weight: .bold))
+                Text("tap to add to your library")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.secondaryText)
+            }
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 18)
+
+            LazyVGrid(columns: TileGrid.columns, spacing: TileGrid.spacing) {
+                ForEach(catalogMatches) { entry in
+                    catalogTile(entry)
+                }
+            }
+            .padding(.horizontal, 18)
+        }
+        .padding(.top, 6)
+        .padding(.bottom, 20)
+    }
+
+    private func catalogTile(_ entry: CatalogSong) -> some View {
+        Button {
+            let added = model.importCatalogSong(entry)
+            model.metronome.loadSong(added)
+            toastMessage = "Added \(added.title) to your library"
+        } label: {
+            TileCard {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text("\(Int(entry.bpm))")
+                            .font(Theme.tempoFont(size: 30))
+                            .foregroundStyle(Theme.primaryText)
+                        Text("BPM")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Theme.secondaryText)
+                        Spacer()
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.accent)
+                    }
+
+                    Text(entry.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.primaryText)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let artist = entry.artist {
+                        Text(artist)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.secondaryText)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 2)
+
+                    HStack(spacing: 5) {
+                        TileChip("\(entry.beats)/\(entry.noteValue)")
+                        if let key = entry.key {
+                            TileChip(key, tint: Theme.accent)
+                        }
+                    }
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.corner)
+                    .strokeBorder(Theme.accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func tile(_ song: Song) -> some View {
@@ -137,12 +249,12 @@ public struct SongsGridView: View {
             AddToServiceMenu(model: model, songID: song.id, key: song.defaultKey) { message in
                 toastMessage = message
             }
-            Button("Edit\u{2026}") { editing = song }
+            Button("Edit\u{2026}") { model.editingSong = song }
             // Opens the editor on the copy, since the reason to duplicate is
             // almost always to change something about it.
             Button("Duplicate\u{2026}") {
                 if let copy = model.library.duplicateSong(song.id) {
-                    editing = copy
+                    model.editingSong = copy
                 }
             }
             Divider()

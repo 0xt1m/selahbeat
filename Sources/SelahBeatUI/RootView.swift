@@ -186,6 +186,14 @@ public struct SelahBeatRootView: View {
         }
         .preferredColorScheme(.dark)
         .task { model.startBackgroundSync() }
+        // Presented here so the E shortcut can open the editor from any
+        // screen, and so it survives navigating between them.
+        .sheet(item: Bindable(model).editingSong) { song in
+            SongEditorView(model: model, song: song) { saved in
+                model.library.updateSong(saved)
+                model.reloadTransportAfterEditing(saved)
+            }
+        }
     }
 
     @ViewBuilder

@@ -54,6 +54,8 @@ final class AppKitEventBridge {
         case 17:   // t
             model.metronome.tap()
             return true
+        case 14:   // e - edit the song that is loaded, i.e. the one just clicked
+            return model.editLoadedSong()
         case 126:  // up arrow
             model.metronome.nudge(event.modifierFlags.contains(.shift) ? 5 : 1)
             return true
@@ -61,8 +63,20 @@ final class AppKitEventBridge {
             model.metronome.nudge(event.modifierFlags.contains(.shift) ? -5 : -1)
             return true
         default:
-            return false
+            break
         }
+
+        // 1-9 jump to that song in the open service, 0 to the tenth. Read from
+        // the characters rather than key codes so it follows the keyboard
+        // layout, and only consumed when the service actually has that song -
+        // otherwise a stray key would swallow itself silently.
+        if let character = event.charactersIgnoringModifiers?.first,
+           let digit = character.wholeNumberValue,
+           (0...9).contains(digit) {
+            return model.loadSong(atServicePosition: digit == 0 ? 10 : digit)
+        }
+
+        return false
     }
 }
 

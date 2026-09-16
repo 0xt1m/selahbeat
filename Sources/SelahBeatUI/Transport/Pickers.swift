@@ -19,7 +19,10 @@ public struct TimeSignaturePicker: View {
                 } label: {
                     HStack {
                         Text(signature.display)
-                        if signature.isCompound { Text("compound").foregroundStyle(.secondary) }
+                        if signature.noteValue == 8 {
+                            Text(signature.eighthGrouping.map(String.init).joined(separator: "+"))
+                                .foregroundStyle(.secondary)
+                        }
                         if signature == controller.timeSignature { Image(systemName: "checkmark") }
                     }
                 }

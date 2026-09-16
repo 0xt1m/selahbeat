@@ -111,3 +111,53 @@ export async function deleteSong(formData: FormData) {
     revalidatePath('/admin');
   }
 }
+
+/**
+ * Edits one or more fields of a song from the catalog table.
+ *
+ * Kept separate from `saveSong`, which is form-shaped and redirects: this is
+ * called as you tab out of a cell, so it patches only what changed, leaves
+ * every other column alone, and returns instead of navigating.
+ */
+const patchSchema = z.object({
+  title: z.string().min(1, 'Title cannot be empty').max(200).optional(),
+  artist: z.string().max(200).nullable().optional(),
+  bpm: z.coerce.number().min(20, 'Tempo must be 20-400').max(400, 'Tempo must be 20-400').optional(),
+  beats: z.coerce.number().int().min(1).max(32).optional(),
+  noteValue: z.coerce
+    .number()
+    .int()
+    .refine((v) => [2, 4, 8, 16].includes(v), 'Bad note value')
+    .optional(),
+  key: z.string().max(10).nullable().optional(),
+  verified: z.boolean().optional(),
+});
+
+export async function patchSong(id: string, patch: unknown) {
+  await requireAdmin();
+
+  const existing = getSong(id);
+  if (!existing) return { error: 'That song no longer exists.' };
+
+  const parsed = patchSchema.safeParse(patch);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const data = parsed.data;
+
+  // Every field is read from the row first, so patching the tempo can never
+  // blank the notes or flip the verified flag as a side effect.
+  upsertSong({
+    id: existing.id,
+    title: data.title ?? existing.title,
+    artist: data.artist !== undefined ? data.artist : existing.artist,
+    bpm: data.bpm ?? existing.bpm,
+    beats: data.beats ?? existing.beats,
+    noteValue: data.noteValue ?? existing.noteValue,
+    key: data.key !== undefined ? data.key : existing.key,
+    notes: existing.notes,
+    verified: data.verified ?? existing.verified,
+  });
+
+  revalidatePath('/admin');
+  revalidatePath('/');
+  return { ok: true };
+}

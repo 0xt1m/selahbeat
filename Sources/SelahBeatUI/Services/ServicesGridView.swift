@@ -145,6 +145,7 @@ struct RenameSheet: View {
                 .font(.system(size: 17, weight: .semibold))
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
+                .keyboardDoneButton()
                 .focused($focused)
                 .onSubmit(onSave)
             HStack {

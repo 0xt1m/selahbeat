@@ -19,6 +19,9 @@ public final class AppModel {
 
     /// Which service the sidebar has selected, if any.
     public var selectedServiceID: UUID?
+    /// The song an editor sheet is open on. Lives here rather than in a view
+    /// so a keyboard shortcut can open it from anywhere in the app.
+    public var editingSong: Song?
     public var isStageMode: Bool = false
 
     private let log = Logger(subsystem: "app.selahbeat", category: "app")
@@ -181,6 +184,39 @@ public final class AppModel {
 
     public var isSyncingCatalog: Bool { sync?.isSyncing ?? false }
 
+    // MARK: - Keeping a tapped tempo
+
+    /// The transport is playing the loaded song at a different tempo than the
+    /// song itself says - usually because it was just tapped in. Worth
+    /// offering to keep, never worth saving silently.
+    public var loadedSongTempoDiffers: Bool {
+        guard let loaded = metronome.loadedItem else { return false }
+        return Int(metronome.bpm.rounded()) != Int(loaded.bpm.rounded())
+    }
+
+    /// Writes the transport's tempo onto the loaded song.
+    ///
+    /// Any per-service tempo override on this placement is cleared: it would
+    /// otherwise keep winning, and the set list would still show the old
+    /// number right after you pressed Save.
+    public func saveTempoToLoadedSong() {
+        guard let loaded = metronome.loadedItem else { return }
+
+        var song = loaded.song
+        song.defaultBPM = Song.clampBPM(metronome.bpm.rounded())
+        library.updateSong(song)
+
+        var item = loaded.item
+        if item.bpmOverride != nil, let serviceID = metronome.loadedServiceID {
+            item.bpmOverride = nil
+            library.updateItem(item, in: serviceID)
+        }
+
+        if let refreshed = library.resolved(item) {
+            metronome.load(refreshed, serviceID: metronome.loadedServiceID)
+        }
+    }
+
     // MARK: - Service navigation
 
     public var selectedService: Service? {
@@ -207,6 +243,41 @@ public final class AppModel {
         let next = index + direction
         guard items.indices.contains(next) else { return }
         metronome.load(items[next], serviceID: serviceID)
+    }
+
+    /// After a song is edited, puts the new version into the transport if it
+    /// is the one loaded - otherwise the click would keep the old tempo until
+    /// the song was picked again.
+    public func reloadTransportAfterEditing(_ saved: Song) {
+        guard metronome.loadedItem?.song.id == saved.id else { return }
+        let item = metronome.loadedItem?.item ?? ServiceItem(songID: saved.id)
+        if let refreshed = library.resolved(item) {
+            metronome.load(refreshed, serviceID: metronome.loadedServiceID)
+        }
+    }
+
+    /// Opens the editor on whatever song is loaded in the transport - which
+    /// is the song you just clicked.
+    @discardableResult
+    public func editLoadedSong() -> Bool {
+        guard let song = metronome.loadedItem?.song else { return false }
+        editingSong = song
+        return true
+    }
+
+    /// Loads the nth song of the service on screen, counting from 1.
+    ///
+    /// The number keys are how you jump around a set list mid-service without
+    /// looking - hence counting from 1, matching the numbers printed on the
+    /// rows, rather than from 0.
+    @discardableResult
+    public func loadSong(atServicePosition position: Int) -> Bool {
+        guard let serviceID = selectedServiceID ?? metronome.loadedServiceID else { return false }
+        let items = library.resolvedItems(in: serviceID)
+        let index = position - 1
+        guard items.indices.contains(index) else { return false }
+        metronome.load(items[index], serviceID: serviceID)
+        return true
     }
 
     public var canStepForward: Bool {

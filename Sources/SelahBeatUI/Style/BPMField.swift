@@ -41,11 +41,32 @@ public struct BPMField: View {
                     commit()
                 }
             }
+            .onChange(of: text) { _, _ in
+                // Publish as you type, but only once what is typed is already
+                // a usable tempo. Clicking Save does not first take focus away
+                // from this field, so a value that waited for focus loss to be
+                // committed would be silently dropped.
+                //
+                // Half-typed values are left alone rather than clamped, which
+                // is what made "156" jump to 205: the leading "1" was snapped
+                // up to the minimum on its way past.
+                if let parsed = parsedInRange { bpm = parsed }
+            }
             .onChange(of: bpm) { _, newValue in
                 // Keep in step when something else changes the tempo (the
                 // stepper, tap tempo), but never while the user is mid-edit.
                 if !isFocused { text = Self.display(newValue) }
             }
+    }
+
+    /// The typed text, only if it already reads as a tempo in range.
+    private var parsedInRange: Double? {
+        let cleaned = text
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespaces)
+        guard let parsed = Double(cleaned),
+              parsed >= Song.minBPM, parsed <= Song.maxBPM else { return nil }
+        return parsed
     }
 
     private func commit() {

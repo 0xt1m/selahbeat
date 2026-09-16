@@ -69,7 +69,12 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         defaultKey: MusicalKey? = nil,
         origin: SongOrigin = .custom,
         notes: String? = nil,
-        mix: SongMix? = nil,
+        // Every song made from now on carries the standard mix - accent and
+        // quarters at half, eighths and sixteenths muted - so it always sounds
+        // the same whatever the transport happened to be set to. Songs saved
+        // before this still decode as nil, which keeps meaning "leave the
+        // current mix alone".
+        mix: SongMix? = .standard,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {

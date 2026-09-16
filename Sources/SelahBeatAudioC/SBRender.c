@@ -184,6 +184,9 @@ static inline uint8_t sb_natural_level(uint32_t tickInBar, uint32_t ticksPerBeat
     uint32_t pos = tickInBar % ticksPerBeat;
     if (pos == 0) return SB_LEVEL_QUARTER;
     if (ticksPerBeat == 4) return (pos == 2) ? SB_LEVEL_EIGHTH : SB_LEVEL_SIXTEENTH;
+    // An x/8 meter is gridded two ticks to the eighth, so the tick between
+    // two eighths is a sixteenth. Must agree with ClickPattern.levelFor.
+    if (ticksPerBeat == 2) return SB_LEVEL_SIXTEENTH;
     return SB_LEVEL_EIGHTH;
 }
 

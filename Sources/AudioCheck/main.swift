@@ -2,6 +2,9 @@ import Foundation
 import SelahBeatCore
 import SelahBeatAudioC
 
+// A quick way to see what every meter actually clicks, without hardware.
+if CommandLine.arguments.contains("--meters") { dumpMeters(); exit(0) }
+
 /// Verifies the whole audio path on real hardware: engine construction, the
 /// always-on graph, parameter publishing, and that ticks actually fire.
 @MainActor

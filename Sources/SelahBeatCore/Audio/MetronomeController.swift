@@ -232,10 +232,10 @@ public final class MetronomeController {
         timeSignature = resolved.timeSignature
         regeneratePattern()
 
-        // A song without its own mix leaves the current balance untouched.
-        if let mix = resolved.song.mix {
-            apply(mix)
-        }
+        // A song without its own mix gets the standard one, so switching from
+        // a song with eighths dialled in never leaves them ringing under the
+        // next song.
+        apply(resolved.song.mix ?? .standard)
     }
 
     /// Applies a song's saved layer balance.
