@@ -4,6 +4,8 @@ import { isAuthenticated } from '@/lib/auth';
 import { listAllSongs, stats } from '@/lib/catalog';
 import { logout } from './actions';
 import { SongTable } from './SongTable';
+import { ImportSeedButton } from './ImportSeedButton';
+import { pendingSeedCount } from '@/lib/seed-import';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +18,7 @@ export default async function AdminPage({
 
   const { q = '', filter = '' } = await searchParams;
   const summary = stats();
+  const pendingSeed = pendingSeedCount();
   let songs = listAllSongs();
 
   if (q) {
@@ -69,6 +72,8 @@ export default async function AdminPage({
           Filter
         </button>
       </form>
+
+      {pendingSeed > 0 && <ImportSeedButton count={pendingSeed} />}
 
       {summary.unverified > 0 && (
         <p className="mb-6 rounded-lg border border-amber-900/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">

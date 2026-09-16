@@ -7,6 +7,7 @@ import { headers } from 'next/headers';
 import { checkPassword, createSession, destroySession, isAuthenticated } from '@/lib/auth';
 import { checkRateLimit, recordFailure, clearAttempts } from '@/lib/ratelimit';
 import { upsertSong, softDeleteSong, slugify, getSong } from '@/lib/catalog';
+import { importMissingSeedSongs } from '@/lib/seed-import';
 
 const songSchema = z.object({
   id: z.string().min(1).max(80).optional(),
@@ -160,4 +161,19 @@ export async function patchSong(id: string, patch: unknown) {
   revalidatePath('/admin');
   revalidatePath('/');
   return { ok: true };
+}
+
+/**
+ * Adds every song in the shipped seed file that the database does not have.
+ *
+ * The database is only seeded automatically when it is empty, so a catalogue
+ * that grew after launch would otherwise never reach a running server. Songs
+ * already present keep whatever has been edited here.
+ */
+export async function importSeedSongs() {
+  await requireAdmin();
+  const { added } = importMissingSeedSongs();
+  revalidatePath('/admin');
+  revalidatePath('/');
+  return { added };
 }

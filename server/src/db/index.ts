@@ -77,23 +77,29 @@ export function migrate() {
 }
 
 /**
- * Loads catalog/seed-songs.json if the catalog is empty.
+ * Loads catalog/seed-songs.json.
  *
  * Runs in-process rather than as a separate `npm run seed` step, because the
  * production image is a Next.js standalone build: it has no tsx, no src/ and no
  * dev dependencies, so the TypeScript seed script cannot run there. Seeding on
  * first use means a fresh deployment comes up populated with no extra command.
  *
- * Only ever fills an empty catalog, so it can never overwrite edits made in
- * /admin, and re-running it is a no-op.
+ * Only ever adds songs that are missing, so it can never overwrite edits made
+ * in /admin, and re-running it is a no-op.
  */
-function seedIfEmpty() {
-  const existing = db.get<{ n: number }>(sql`SELECT COUNT(*) AS n FROM songs`);
-  if (existing && existing.n > 0) return;
-
+/**
+ * Adds catalogue songs the database does not have.
+ *
+ * Runs on every boot, not only the first, because the catalogue grows after
+ * launch: a deploy that ships new songs should bring them with it rather than
+ * needing a command run by hand on the server. Existing rows are left exactly
+ * as they are - `ON CONFLICT DO NOTHING` - so edits made in /admin survive, and
+ * a song deleted there stays deleted, since its row is still present.
+ */
+function seedMissingSongs() {
   const seedPath = path.resolve(process.cwd(), 'catalog/seed-songs.json');
   if (!fs.existsSync(seedPath)) {
-    console.warn(`[selahbeat] no seed catalog at ${seedPath}; starting empty`);
+    console.warn(`[selahbeat] no seed catalog at ${seedPath}`);
     return;
   }
 
@@ -106,9 +112,19 @@ function seedIfEmpty() {
   try {
     const raw = JSON.parse(fs.readFileSync(seedPath, 'utf8')) as { songs: SeedSong[] };
     const now = new Date().toISOString();
-    let revision = 0;
 
-    for (const song of raw.songs) {
+    const known = new Set(
+      db.all<{ id: string }>(sql`SELECT id FROM songs`).map((row) => row.id)
+    );
+    const missing = raw.songs.filter((song) => !known.has(song.id));
+    if (missing.length === 0) return;
+
+    const startRevision = Number(
+      db.get<{ value: string }>(sql`SELECT value FROM meta WHERE key = 'catalog_revision'`)?.value ?? 0
+    );
+    let revision = startRevision;
+
+    for (const song of missing) {
       revision += 1;
       db.run(sql`
         INSERT INTO songs (id, title, artist, bpm, beats, note_value, key, notes,
@@ -120,12 +136,14 @@ function seedIfEmpty() {
       `);
     }
 
+    // Each added song took a revision, so installed apps pull exactly the new
+    // ones on their next sync instead of the whole catalogue again.
     db.run(sql`
       INSERT INTO meta (key, value) VALUES ('catalog_revision', ${String(revision)})
       ON CONFLICT(key) DO UPDATE SET value = ${String(revision)}
     `);
 
-    console.log(`[selahbeat] seeded ${raw.songs.length} songs`);
+    console.log(`[selahbeat] added ${missing.length} songs from the catalog file`);
   } catch (error) {
     console.error('[selahbeat] seed failed:', error);
   }
@@ -135,6 +153,6 @@ let migrated = false;
 export function ensureMigrated() {
   if (migrated) return;
   migrate();
-  seedIfEmpty();
+  seedMissingSongs();
   migrated = true;
 }
