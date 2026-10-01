@@ -35,6 +35,10 @@ public struct LabeledTextField: View {
             TextField("", text: $text, prompt: Text(placeholder).foregroundStyle(Theme.secondaryText.opacity(0.6)))
                 .textFieldStyle(.plain)
                 .labelsHidden()
+                // The box is painted from the theme, so the text has to be as
+                // well: left to the system it turns dark-on-dark the moment the
+                // window is in light appearance.
+                .foregroundStyle(Theme.primaryText)
                 .focused($focused)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)

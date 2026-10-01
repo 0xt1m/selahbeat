@@ -64,6 +64,106 @@ export function migrate() {
       created_at TEXT NOT NULL
     )
   `);
+  // --- Backup and sharing -------------------------------------------------
+  //
+  // An account is nothing but an id: no email, no password. A device proves it
+  // owns one by presenting a secret that only ever leaves the device as a
+  // hash. A recovery code is a second, human-typeable way back to the same
+  // account, for a phone that has been wiped or replaced.
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      -- Per-account monotonic counter. Same trick as the catalog: a client
+      -- pulls "everything above the revision I last saw" in one indexed scan.
+      revision INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS devices (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      secret_hash TEXT NOT NULL,
+      label TEXT,
+      created_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_devices_account ON devices (account_id)`);
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS recovery_codes (
+      code_hash TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_recovery_account ON recovery_codes (account_id)`);
+
+  // One row per song or service. The server never parses `body`: the app owns
+  // its own shape, and a client on an older version must not have its
+  // documents rewritten by a server that thinks it knows better.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS documents (
+      id TEXT NOT NULL,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      body TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      -- The client's own clock, used only to settle which of two edits wins.
+      client_updated_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (account_id, id)
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_documents_revision ON documents (account_id, revision)`);
+
+  // A share is a service other people can edit. Its documents live here rather
+  // than in any one account, so joining does not put anything in your library
+  // and leaving does not take anything out of anyone else's.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS shares (
+      id TEXT PRIMARY KEY,
+      code_hash TEXT NOT NULL UNIQUE,
+      owner_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      revision INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_shares_owner ON shares (owner_account_id)`);
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS share_members (
+      share_id TEXT NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'member',
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (share_id, account_id)
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_share_members_account ON share_members (account_id)`);
+
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS share_documents (
+      id TEXT NOT NULL,
+      share_id TEXT NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      body TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      deleted INTEGER NOT NULL DEFAULT 0,
+      client_updated_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      updated_by TEXT,
+      PRIMARY KEY (share_id, id)
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_share_documents_revision ON share_documents (share_id, revision)`);
+
   db.run(sql`
     CREATE TABLE IF NOT EXISTS subscriptions (
       id TEXT PRIMARY KEY,

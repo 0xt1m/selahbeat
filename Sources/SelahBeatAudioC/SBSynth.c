@@ -291,3 +291,73 @@ SBSoundRef sb_synth_render(SBArena *arena, SBTimbre timbre, int32_t level, doubl
     out.gain = (float)levelGain;
     return out;
 }
+
+
+// MARK: - Pad wavetable
+
+/// Each voice is a different harmonic recipe over the same single cycle.
+///
+/// Amplitudes fall off with harmonic number so every voice stays band-limited:
+/// a pad holds for minutes at a time, and anything aliasing would be obvious
+/// long before the song ended.
+SBSoundRef sb_synth_pad_table(SBArena *arena, uint32_t length, SBPadVoice voice) {
+    SBSoundRef ref = { NULL, 0, 0.0f };
+    if (!arena || length < 64) return ref;
+
+    float *samples = sb_arena_alloc(arena, length);
+    if (!samples) return ref;
+
+    const int harmonics = 24;
+    float peak = 0.0f;
+
+    for (uint32_t i = 0; i < length; i++) {
+        const double phase = (double)i / (double)length * 2.0 * M_PI;
+        double value = 0.0;
+
+        for (int h = 1; h <= harmonics; h++) {
+            double amplitude = 0.0;
+            switch (voice) {
+                case SB_PAD_STRINGS:
+                    // Sawtooth-ish: every harmonic, falling off slowly, which
+                    // is what gives a bowed sound its bite.
+                    amplitude = 1.0 / (double)h;
+                    if (h > 12) amplitude *= 0.5;
+                    break;
+                case SB_PAD_GLASS:
+                    // Octaves only, so nothing beats against anything else.
+                    amplitude = (h == 1 || h == 2 || h == 4 || h == 8 || h == 16)
+                              ? 1.0 / (double)h : 0.0;
+                    break;
+                case SB_PAD_AIR:
+                    // Nearly a sine. Sits under a band without being noticed.
+                    amplitude = (h <= 3) ? 1.0 / (double)(h * h * h) : 0.0;
+                    break;
+                case SB_PAD_ORGAN:
+                    // Drawbar octaves at close to equal strength: steady and
+                    // present rather than atmospheric.
+                    amplitude = (h == 1) ? 1.0 : (h == 2 ? 0.6 : (h == 4 ? 0.4 : (h == 8 ? 0.2 : 0.0)));
+                    break;
+                case SB_PAD_WARM:
+                default:
+                    amplitude = (h % 2 == 1) ? 1.0 / (double)(h * h)
+                                             : 0.35 / (double)(h * h);
+                    break;
+            }
+            if (amplitude > 0.0) value += amplitude * sin(phase * (double)h);
+        }
+
+        samples[i] = (float)value;
+        const float magnitude = fabsf(samples[i]);
+        if (magnitude > peak) peak = magnitude;
+    }
+
+    if (peak > 0.0f) {
+        const float scale = 1.0f / peak;
+        for (uint32_t i = 0; i < length; i++) samples[i] *= scale;
+    }
+
+    ref.samples = samples;
+    ref.length = length;
+    ref.gain = 1.0f;
+    return ref;
+}

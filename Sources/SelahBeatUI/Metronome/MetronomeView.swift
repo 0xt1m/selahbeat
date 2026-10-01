@@ -62,6 +62,7 @@ public struct MetronomeView: View {
     private var narrowBody: some View {
         VStack(spacing: 24) {
             tempoBlock(bpmSize: 104, controlWidth: 440)
+            PadCard(model: model)
             accentEditor
             soundBlock
             levelBlock
@@ -73,6 +74,7 @@ public struct MetronomeView: View {
         HStack(alignment: .top, spacing: 26) {
             VStack(spacing: 22) {
                 tempoBlock(bpmSize: min(190, width * 0.13), controlWidth: 560)
+                PadCard(model: model)
             }
             .frame(maxWidth: .infinity)
 

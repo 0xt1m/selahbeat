@@ -39,6 +39,51 @@ public final class LibraryStore {
         index.rebuild(with: byID.values)
     }
 
+    // MARK: - Archives
+
+    /// Everything in this library, as a file.
+    public func archive() -> LibraryArchive {
+        LibraryArchive(songs: allSongs, services: sortedServices)
+    }
+
+    /// Merges an archive in, adding only what is not already here.
+    ///
+    /// Never overwrites: a song or service already present keeps whatever it
+    /// has. Importing the same file twice therefore does nothing the second
+    /// time, and importing a band mate's file cannot quietly rewrite your own
+    /// tempos.
+    @discardableResult
+    public func importArchive(_ archive: LibraryArchive) -> ImportSummary {
+        var summary = ImportSummary()
+
+        for song in archive.songs {
+            if songs[song.id] != nil {
+                summary.songsSkipped += 1
+                continue
+            }
+            songs[song.id] = song
+            index.update(song)
+            summary.songsAdded += 1
+        }
+
+        for service in archive.services {
+            if services.contains(where: { $0.id == service.id }) {
+                summary.servicesSkipped += 1
+                continue
+            }
+            // A service whose songs did not come with it would be a list of
+            // blanks, so those placements are dropped rather than shown broken.
+            var incoming = service
+            incoming.items = service.items.filter { songs[$0.songID] != nil }
+            services.append(incoming)
+            summary.servicesAdded += 1
+        }
+
+        if summary.songsAdded > 0 { saveLibrary() }
+        if summary.servicesAdded > 0 { saveServices() }
+        return summary
+    }
+
     // MARK: - Derived
 
     public var allSongs: [Song] {

@@ -8,6 +8,7 @@ public struct ServiceDetailView: View {
     private let serviceID: UUID
 
     @State private var showingAddSong = false
+    @State private var showingShare = false
     @State private var editingItemID: UUID?
     @State private var renaming = false
     @State private var draftName = ""
@@ -31,10 +32,24 @@ public struct ServiceDetailView: View {
             }
         }
         .background(Theme.surface)
+        // A shared service keeps itself in step while its screen is open:
+        // local edits go up, everyone else's come down. Polling rather than a
+        // live stream for now - a few seconds late is not a problem for a set
+        // list, and it works through any proxy.
+        .task(id: serviceID) {
+            guard model.shares?.membership(forService: serviceID) != nil else { return }
+            while !Task.isCancelled {
+                await model.syncShare(serviceID)
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
         .keyboardDoneButton()
         .toast($toastMessage)
         .sheet(isPresented: $showingAddSong) {
             AddSongSheet(model: model, serviceID: serviceID)
+        }
+        .sheet(isPresented: $showingShare) {
+            ShareServiceSheet(model: model, serviceID: serviceID)
         }
     }
 
@@ -56,6 +71,20 @@ public struct ServiceDetailView: View {
                         }
                 }
                 Spacer()
+
+                if model.shares != nil {
+                    Button {
+                        showingShare = true
+                    } label: {
+                        // Says what it gives you, because "Share" on a Mac
+                        // means the system share sheet and this is not that.
+                        Label(model.shares?.membership(forService: serviceID) == nil
+                              ? "Share" : "Code",
+                              systemImage: "person.2.badge.plus")
+                    }
+                    .help("Get a code so your band can edit this set list")
+                }
+
                 Button {
                     showingAddSong = true
                 } label: {
@@ -65,6 +94,12 @@ public struct ServiceDetailView: View {
             }
 
             HStack(spacing: 10) {
+                if let membership = model.shares?.membership(forService: serviceID) {
+                    Label(membership.isOwner ? "Shared by you" : "Shared with you",
+                          systemImage: "person.2.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
                 if let date = service?.date {
                     Text(date.formatted(date: .abbreviated, time: .omitted))
                 }

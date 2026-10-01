@@ -28,6 +28,7 @@ public struct NotesField: View {
             }
             TextEditor(text: $text)
                 .scrollContentBackground(.hidden)
+                .foregroundStyle(Theme.primaryText)
                 .frame(minHeight: minHeight)
                 .padding(.leading, -1)
         }

@@ -57,6 +57,14 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
     /// nil means "whatever the mix is set to"; loading such a song leaves the
     /// current balance alone rather than resetting it.
     public var mix: SongMix?
+    /// Whether this song plays a pad under the click, in its own key.
+    ///
+    /// Optional rather than a plain Bool so a library written before pads
+    /// existed still decodes; absent means off, which is the default.
+    public var padEnabled: Bool?
+    /// Which pad voice this song uses. Absent means whichever voice the app is
+    /// set to, so a song saved before there was a choice still works.
+    public var padSound: PadSound?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -75,6 +83,8 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         // before this still decode as nil, which keeps meaning "leave the
         // current mix alone".
         mix: SongMix? = .standard,
+        padEnabled: Bool? = nil,
+        padSound: PadSound? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -87,9 +97,14 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
         self.origin = origin
         self.notes = notes
         self.mix = mix
+        self.padEnabled = padEnabled
+        self.padSound = padSound
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
+
+    /// Pads are off unless a song asks for one.
+    public var playsPad: Bool { padEnabled ?? false }
 
     public static let minBPM: Double = 20
     public static let maxBPM: Double = 400

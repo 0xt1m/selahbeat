@@ -127,6 +127,141 @@ public final class MetronomeController {
     }
 
     /// The accent table. Editable per tick from the UI.
+    // MARK: - Pad
+
+    /// A sustained chord under the click, in the key of the loaded song.
+    ///
+    /// Two ways in: a song can ask for one, in which case it starts and stops
+    /// with the click, or it can be switched on by hand from the metronome
+    /// screen and hold through anything.
+    public var padManualOn: Bool = false {
+        didSet {
+            guard padManualOn != oldValue else { return }
+            updatePad()
+        }
+    }
+
+    public var padLevel: Double = 0.7 {
+        didSet {
+            guard padLevel != oldValue else { return }
+            updatePad()
+        }
+    }
+
+    /// Which pad voice is playing. Changing it mid-song crossfades, exactly
+    /// as a key change does, so trying them out while the band plays is safe.
+    public var padSound: PadSound = .warm {
+        didSet {
+            guard padSound != oldValue else { return }
+            updatePad()
+        }
+    }
+
+    public var padKey: MusicalKey = MusicalKey(.C) {
+        didSet {
+            guard padKey != oldValue else { return }
+            updatePad()
+        }
+    }
+
+    /// True while the pad takes its key from the loaded song rather than one
+    /// chosen by hand.
+    public private(set) var padFollowsSong: Bool = true
+
+    /// True until a voice is picked by hand. Without this, loading a song that
+    /// has no voice of its own would immediately offer to save the one that
+    /// happened to be set, which is nagging rather than helping.
+    public private(set) var padSoundFollowsSong: Bool = true
+
+    public func setPadSoundManually(_ sound: PadSound) {
+        padSoundFollowsSong = false
+        padSound = sound
+    }
+
+    /// Set when the pad a song asked for is switched off by hand mid-song.
+    /// Scoped to that song so moving on to the next one starts clean.
+    public private(set) var padSuppressedSongID: SongID?
+
+    /// Whether a chord is sounding right now, for the UI to reflect.
+    public var isPadSounding: Bool {
+        if padManualOn { return true }
+        guard isRunning, let item = loadedItem, item.song.playsPad else { return false }
+        return padSuppressedSongID != item.song.id
+    }
+
+    /// Whether a pad is *wanted*, whether or not the click is running. This is
+    /// what the toggle shows: stopping the click should not flip a switch the
+    /// user did not touch.
+    public var isPadArmed: Bool {
+        if padManualOn { return true }
+        guard let item = loadedItem, item.song.playsPad else { return false }
+        return padSuppressedSongID != item.song.id
+    }
+
+    /// The toggle on the metronome screen, in both directions.
+    ///
+    /// Switching off a pad the song asked for silences it for this song only,
+    /// rather than turning the song's setting off behind the user's back - the
+    /// card then offers to make it permanent.
+    public func setPadSounding(_ on: Bool) {
+        if on {
+            if let item = loadedItem, item.song.playsPad, padSuppressedSongID == item.song.id {
+                padSuppressedSongID = nil
+            } else {
+                padManualOn = true
+            }
+        } else {
+            padManualOn = false
+            if let item = loadedItem, item.song.playsPad {
+                padSuppressedSongID = item.song.id
+            }
+        }
+        updatePad()
+    }
+
+    /// The loaded song asks for a pad, so starting the click starts it too.
+    public var loadedSongPlaysPad: Bool { loadedItem?.song.playsPad == true }
+
+    public func setPadKeyManually(_ key: MusicalKey) {
+        padFollowsSong = false
+        padKey = key
+    }
+
+    public func resumePadFollowingSong() {
+        padFollowsSong = true
+        if let key = loadedItem?.key { padKey = key }
+        updatePad()
+    }
+
+    private func updatePad() {
+        engine.setPad(isPadSounding ? PadVoicing(key: padKey) : nil,
+                      level: padLevel, sound: padSound)
+    }
+
+    // MARK: - Output routing
+
+    /// Which output channels each source is written to, counted from 1.
+    /// Empty means every channel, which is what built-in speakers want.
+    public var clickChannels: Set<Int> = [] {
+        didSet {
+            guard clickChannels != oldValue else { return }
+            applyRouting()
+        }
+    }
+
+    public var padChannels: Set<Int> = [] {
+        didSet {
+            guard padChannels != oldValue else { return }
+            applyRouting()
+        }
+    }
+
+    public var outputChannelCount: Int { engine.outputChannelCount }
+
+    private func applyRouting() {
+        engine.setRouting(clickChannels: clickChannels, padChannels: padChannels)
+    }
+
     public private(set) var pattern: ClickPattern = .standard(for: .fourFour, subdivision: .quarter)
 
     /// What the transport is currently loaded with, if it came from a service.
@@ -168,12 +303,17 @@ public final class MetronomeController {
         stoppedByRouteChange = false
         engine.start()
         isRunning = true
+        // A song that asks for a pad gets one the moment the click starts, in
+        // its own key - that is the whole point of the per-song switch.
+        updatePad()
         setIdleTimerDisabled(true)
     }
 
     public func stop() {
         engine.stop()
         isRunning = false
+        // Fades rather than cutting, and a pad switched on by hand stays.
+        updatePad()
         setIdleTimerDisabled(false)
     }
 
@@ -231,6 +371,21 @@ public final class MetronomeController {
         setTempo(resolved.bpm)
         timeSignature = resolved.timeSignature
         regeneratePattern()
+
+        if padFollowsSong, let key = resolved.key {
+            padKey = key
+        }
+        // A song that names a pad voice brings it along; one that does not
+        // plays with whatever is already set.
+        if let sound = resolved.song.padSound {
+            padSound = sound
+        }
+        padSoundFollowsSong = true
+        // The new song may want a pad where the last one did not, or the other
+        // way round, and a pad silenced for the last song should not stay
+        // silenced for this one.
+        padSuppressedSongID = nil
+        updatePad()
 
         // A song without its own mix gets the standard one, so switching from
         // a song with eighths dialled in never leaves them ringing under the

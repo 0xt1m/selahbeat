@@ -25,6 +25,15 @@ public final class AppSettings {
         public var serverURL: String = "https://selahbeat.com"
         public var tapStartsPlayback: Bool = false
 
+        // --- Pad and output routing ---
+        public var padLevel: Double = 0.7
+        public var padSound: PadSound = .warm
+        /// Output channels for each source, counted from 1. Empty means every
+        /// channel, which is what a laptop speaker wants and what anyone
+        /// without an interface should never have to think about.
+        public var clickChannels: Set<Int> = []
+        public var padChannels: Set<Int> = []
+
         public init() {}
     }
 

@@ -31,6 +31,8 @@ extern "C" {
 #define SB_MAX_VOICES           8
 #define SB_MAX_RENDER_FRAMES 8192   // scratch buffer size; larger buffers are refused
 #define SB_MAX_TICKS_PER_RENDER 32  // burst guard, see SBRender.c
+#define SB_PAD_VOICES          12   // chord tones plus their detuned partners
+#define SB_MAX_CHANNELS        32   // an 18i20 has 20; 32 is headroom, not ambition
 
 /// Which sound a tick plays, and which mix bus it is scaled by.
 ///
@@ -75,6 +77,49 @@ typedef struct {
     uint64_t   generation;
 } SBClickParams;
 
+// MARK: - Pad
+
+/// A sustained chord under the click, in the key of the song.
+///
+/// Synthesised rather than sampled: a wavetable and a dozen phase accumulators
+/// cost almost nothing, never loop, need no audio files, and can be retuned to
+/// any key instantly. `table` points into the same arena as the click sounds.
+typedef struct {
+    const float *table;
+    uint32_t     tableLength;
+    float        freq[SB_PAD_VOICES];   // Hz
+    float        gain[SB_PAD_VOICES];
+    uint32_t     voiceCount;
+    /// Overall pad level, 0...2. Deliberately independent of the click's
+    /// master gain: turning the click down must not take the pad with it.
+    float        level;
+    /// One-pole lowpass coefficient, 0...1. Part of what makes one pad voice
+    /// sound different from another: breathy voices are filtered hard, bright
+    /// ones barely at all.
+    float        filterCoefficient;
+    uint64_t     generation;
+} SBPadParams;
+
+/// One bank of running pad oscillators.
+///
+/// Two of these exist so a key change crossfades rather than jumps: the new
+/// chord fades in while the old fades out, which is what a pad player does by
+/// hand and what sampled-pad apps do with two decks.
+typedef struct {
+    /// Each bank keeps the waveform it started with, so changing pad voice
+    /// crossfades the timbre rather than swapping it under both banks at once.
+    const float *table;
+    uint32_t tableLength;
+    float    phase[SB_PAD_VOICES];      // 0...1
+    float    inc[SB_PAD_VOICES];
+    float    gain[SB_PAD_VOICES];
+    float    lfoPhase[SB_PAD_VOICES];
+    float    lfoInc[SB_PAD_VOICES];
+    uint32_t voiceCount;
+    float    fade;                      // current 0...1
+    float    fadeTarget;
+} SBPadSet;
+
 // MARK: - Voices
 
 typedef struct {
@@ -98,6 +143,11 @@ typedef struct {
     _Atomic uint64_t runToken;         // bumped on every Start; resets phase
     _Atomic uint32_t masterGainBits;   // float bit pattern
     _Atomic int32_t  previewLevel;     // >=0 fires one voice, then resets to -1
+    /// Which output channels each source is written to, one bit per channel.
+    /// Defaults to every channel, which is what a laptop speaker wants; an
+    /// interface lets the click and the pad go to different outputs.
+    _Atomic uint32_t clickChannelMask;
+    _Atomic uint32_t padChannelMask;
 
     // --- 3-slot lock-free parameter publish ---
     SBClickParams    slots[SB_PARAM_SLOTS];
@@ -105,6 +155,13 @@ typedef struct {
     int32_t          writerNextSlot;   // control thread only
     int32_t          writerPrevSlot;   // control thread only
     uint64_t         writerGeneration; // control thread only
+
+    // --- 3-slot publish for the pad, same discipline ---
+    SBPadParams      padSlots[SB_PARAM_SLOTS];
+    _Atomic int32_t  padLiveSlot;
+    int32_t          padWriterNextSlot;
+    int32_t          padWriterPrevSlot;
+    uint64_t         padWriterGeneration;
 
     // --- Render thread only (never touched by the control thread once running) ---
     double   sampleRate;
@@ -120,7 +177,13 @@ typedef struct {
     int32_t  wasRunning;
     uint64_t voiceOrderCounter;
     SBVoice  voices[SB_MAX_VOICES];
-    float   *scratch;                  // SB_MAX_RENDER_FRAMES floats
+    float   *scratch;                  // SB_MAX_RENDER_FRAMES floats, click
+    float   *padScratch;               // SB_MAX_RENDER_FRAMES floats, pad
+    SBPadSet padSets[2];
+    int32_t  padCurrentSet;
+    uint64_t lastPadGeneration;
+    float    padFilterState;           // one-pole lowpass, takes the edge off
+    float    padLevelCurrent;          // smoothed, so the slider cannot zipper
 
     // --- Render thread writes, UI polls (never signals, never dispatches) ---
     _Atomic uint64_t lastTickIndex;
@@ -169,6 +232,24 @@ void sb_publish_params(SBEngineState *st,
                        const SBSoundRef *sounds,
                        const float *levelGain);
 
+/// Publish a pad chord. Single-producer, same as sb_publish_params.
+///
+/// Passing `voiceCount` 0 or `level` 0 silences the pad; it fades rather than
+/// stopping dead, so switching it off mid-song is not a click.
+void sb_publish_pad(SBEngineState *st,
+                    const float *table,
+                    uint32_t tableLength,
+                    const float *freq,
+                    const float *gain,
+                    uint32_t voiceCount,
+                    float level,
+                    float filterCoefficient);
+
+/// Which output channels each source is written to, one bit per channel.
+/// Bit 0 is the first output. Zero means "every channel", so a caller that
+/// never touches routing keeps the old behaviour.
+void sb_set_channel_masks(SBEngineState *st, uint32_t clickMask, uint32_t padMask);
+
 // MARK: - Render (audio thread — REAL-TIME, see THE RULE above)
 
 /// `ts` may be NULL. Returns noErr, or kAudio_ParamError for a malformed
@@ -216,6 +297,24 @@ void     sb_arena_destroy(SBArena *arena);
 /// timbre family (downbeat higher and louder, subdivision quieter and duller).
 /// Returns a sound with samples == NULL if the arena is exhausted.
 SBSoundRef sb_synth_render(SBArena *arena, SBTimbre timbre, int32_t level, double sampleRate);
+
+/// The pad voices, as harmonic recipes rather than samples.
+typedef enum {
+    SB_PAD_WARM    = 0,   // soft, reedy - the default
+    SB_PAD_STRINGS = 1,   // bowed, more harmonics, more movement
+    SB_PAD_GLASS   = 2,   // clean octaves, bell-like on top
+    SB_PAD_AIR     = 3,   // nearly a sine; sits furthest under a band
+    SB_PAD_ORGAN   = 4,   // drawbar octaves, steady and present
+} SBPadVoice;
+
+#define SB_PAD_VOICE_COUNT 5
+
+/// One cycle of a pad waveform, written into the arena.
+///
+/// A single band-limited cycle is all the pad needs: pitch comes from how fast
+/// the oscillators read it, so one table per voice serves every key at no
+/// extra cost.
+SBSoundRef sb_synth_pad_table(SBArena *arena, uint32_t length, SBPadVoice voice);
 
 #ifdef __cplusplus
 }

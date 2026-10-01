@@ -47,12 +47,18 @@ public final class ClickBank: @unchecked Sendable {
     public let sampleRate: Double
     /// [timbre][accent level]
     private var sounds: [[SBSoundRef]]
+    /// One cycle per pad voice. They live in the same arena as the clicks, so
+    /// they are covered by the same delayed-release rule when a bank is
+    /// retired - the render thread may still be reading one.
+    private var padTables: [SBSoundRef] = []
 
     public init?(sampleRate: Double) {
         self.sampleRate = sampleRate
 
         // Generous: every timbre, every level, half a second each.
+        let padTableLength = 2048
         let capacity = Int(Double(ClickTimbre.allCases.count) * Double(SB_ACCENT_LEVELS) * sampleRate * 0.5)
+            + padTableLength * PadSound.allCases.count
         guard let arena = sb_arena_create(capacity) else { return nil }
         self.arena = arena
 
@@ -67,10 +73,22 @@ public final class ClickBank: @unchecked Sendable {
             built.append(perLevel)
         }
         self.sounds = built
+        self.padTables = PadSound.allCases.map {
+            sb_synth_pad_table(arena, UInt32(padTableLength), $0.cValue)
+        }
     }
 
     deinit {
         sb_arena_destroy(arena)
+    }
+
+    /// One cycle of the chosen pad voice, ready to publish.
+    public func padTable(for sound: PadSound) -> SBSoundRef {
+        let index = sound.rawValue
+        guard padTables.indices.contains(index) else {
+            return SBSoundRef(samples: nil, length: 0, gain: 0)
+        }
+        return padTables[index]
     }
 
     /// The five accent-level sounds for one timbre, ready to publish.

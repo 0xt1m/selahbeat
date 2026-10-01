@@ -8,6 +8,8 @@ public struct ServicesGridView: View {
 
     @State private var renamingID: UUID?
     @State private var draftName = ""
+    @State private var sharingID: UUID?
+    @State private var showingNew = false
 
     public init(model: AppModel, onOpen: @escaping (UUID) -> Void) {
         self.model = model
@@ -20,16 +22,21 @@ public struct ServicesGridView: View {
                 ForEach(model.library.sortedServices) { service in
                     tile(service)
                 }
-                AddTile(title: "New Service") {
-                    let service = model.library.createService(name: model.library.suggestedServiceName())
-                    draftName = service.name
-                    renamingID = service.id
-                }
+                AddTile(title: "New Service") { showingNew = true }
             }
             .padding(18)
         }
         .background(Theme.surface)
         .navigationTitle("Services")
+        .sheet(item: Binding(
+            get: { sharingID.map { IdentifiedUUID(id: $0) } },
+            set: { sharingID = $0?.id }
+        )) { wrapper in
+            ShareServiceSheet(model: model, serviceID: wrapper.id)
+        }
+        .sheet(isPresented: $showingNew) {
+            NewServiceSheet(model: model) { onOpen($0) }
+        }
         .sheet(item: renameBinding) { service in
             RenameSheet(name: $draftName, title: "Service name") {
                 var updated = service
@@ -121,6 +128,12 @@ public struct ServicesGridView: View {
             Button("Duplicate") {
                 _ = model.library.duplicateService(service.id, newName: "\(service.name) copy")
             }
+            if model.shares != nil {
+                Button(model.shares?.membership(forService: service.id) == nil
+                       ? "Share\u{2026}" : "Sharing code\u{2026}") {
+                    sharingID = service.id
+                }
+            }
             Divider()
             Button("Delete", role: .destructive) {
                 model.library.deleteService(service.id)
@@ -162,4 +175,10 @@ struct RenameSheet: View {
         .presentationDetents([.height(190)])
         .onAppear { focused = true }
     }
+}
+
+
+/// A UUID that can drive a `.sheet(item:)` without reaching for a global.
+struct IdentifiedUUID: Identifiable {
+    let id: UUID
 }

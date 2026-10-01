@@ -117,6 +117,36 @@ public struct SongEditorView: View {
                             Text(key.display).tag(key.asciiDisplay)
                         }
                     }
+
+                    // Off unless asked for: a pad under a song that does not
+                    // want one is worse than no pad at all.
+                    Toggle("Play a pad for this song", isOn: Binding(
+                        get: { draft.padEnabled ?? false },
+                        set: { draft.padEnabled = $0 ? true : nil }
+                    ))
+
+                    if draft.padEnabled == true {
+                        Picker("Pad sound", selection: Binding(
+                            get: { (draft.padSound ?? model.metronome.padSound).rawValue },
+                            set: { draft.padSound = PadSound(rawValue: $0) }
+                        )) {
+                            ForEach(PadSound.allCases) { sound in
+                                Text(sound.name).tag(sound.rawValue)
+                            }
+                        }
+
+                        Text((draft.padSound ?? model.metronome.padSound).detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if draft.padEnabled == true {
+                        Text(draft.defaultKey == nil
+                             ? "This song has no key yet, so the pad will use whichever key the Metronome screen is set to."
+                             : "Starting the click starts a pad in \(draft.defaultKey?.display ?? "")\u{2009}\u{2014} and stops it again with the click.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 // Every song carries a mix, so there is nothing to switch

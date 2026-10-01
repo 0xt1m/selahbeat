@@ -14,12 +14,17 @@ public struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             soundTab
                 .tabItem { Label("Sound", systemImage: "waveform") }
+            OutputRoutingView(model: model)
+                .tabItem { Label("Outputs", systemImage: "point.3.connected.trianglepath.dotted") }
+            BackupView(model: model)
+                .tabItem { Label("Backup", systemImage: "externaldrive.badge.icloud") }
             DiagnosticsView(model: model)
                 .tabItem { Label("Diagnostics", systemImage: "stethoscope") }
             aboutTab
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .sheetSize(width: 520, height: 400)
+        .preferredColorScheme(.dark)
     }
 
     private var aboutTab: some View {
@@ -106,6 +111,16 @@ public struct SettingsView: View {
                     Slider(value: Bindable(model.metronome).masterGain, in: 0...1.5)
                 }
                 Button("Preview") { model.metronome.previewTimbre(model.metronome.timbre) }
+            }
+
+            Section("Pad") {
+                HStack {
+                    Text("Level")
+                    Slider(value: Bindable(model.metronome).padLevel, in: 0...1.5)
+                }
+                Text("Switch the pad on from the Metronome screen, or per song in the song editor.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             #if os(iOS)

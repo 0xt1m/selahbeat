@@ -54,6 +54,15 @@ public final class IOSAudioSession: AudioSessionConfiguring, @unchecked Sendable
         try session.setPreferredSampleRate(48_000)
         try session.setPreferredIOBufferDuration(Double(preferredBufferFrames) / 48_000.0)
         try session.setActive(true)
+
+        // An interface on the USB-C port can have more than two outputs, but
+        // iOS hands an app stereo unless it asks for more. Asked for after
+        // activation, because the maximum is only known once the route is up,
+        // and never fatal: a phone on its own speaker has nothing to grant.
+        let maximum = session.maximumOutputNumberOfChannels
+        if maximum > 2 {
+            try? session.setPreferredOutputNumberOfChannels(maximum)
+        }
     }
 
     public func deactivate() {

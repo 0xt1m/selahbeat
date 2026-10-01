@@ -77,6 +77,29 @@ func run() async {
     print("peak render time   : \(String(format: "%.0f", controller.diagnostics.maxRenderMicros)) \u{00B5}s")
     print("render load        : \(String(format: "%.2f", controller.diagnostics.renderLoad * 100))%")
 
+    // The pad runs a dozen oscillators per frame on the audio thread. If that
+    // pushed the render anywhere near the buffer deadline it would take the
+    // click down with it, so it is measured rather than assumed.
+    controller.resetRenderStats()
+    controller.padKey = MusicalKey(.E)
+    controller.padLevel = 0.8
+    controller.padManualOn = true
+    try? await Task.sleep(for: .seconds(2))
+    controller.refreshDiagnostics()
+    print("\nwith the pad playing:")
+    print("peak render time   : \(String(format: "%.0f", controller.diagnostics.maxRenderMicros)) \u{00B5}s")
+    print("render load        : \(String(format: "%.2f", controller.diagnostics.renderLoad * 100))%")
+
+    // And with click and pad on different outputs, which is the real setup.
+    controller.clickChannels = [1]
+    controller.padChannels = [2]
+    controller.resetRenderStats()
+    try? await Task.sleep(for: .seconds(1))
+    controller.refreshDiagnostics()
+    print("routed to separate outputs:")
+    print("peak render time   : \(String(format: "%.0f", controller.diagnostics.maxRenderMicros)) \u{00B5}s")
+    controller.padManualOn = false
+
     let ok = abs(ticks - expectedTicks) <= 1 && startLatency < 60
     print(String(repeating: "-", count: 46))
     print(ok ? "PASS" : "FAIL")

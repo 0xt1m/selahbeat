@@ -69,6 +69,14 @@ public final class MetronomeEngine: @unchecked Sendable {
     /// Per-level mix busses, indexed by SBAccentLevel.
     private var levelGains = [Float](repeating: 1.0, count: Int(SB_ACCENT_LEVELS))
 
+    /// The chord the pad is holding, and how loud. Kept here so a bank rebuild
+    /// after a sample-rate change can re-publish it from the new arena.
+    private var padVoicing: PadVoicing?
+    private var padLevel: Float = 0
+    private var padSound: PadSound = .warm
+
+    private var graphRetries = 0
+
     public private(set) var lastError: String?
 
     public init(session: AudioSessionConfiguring) {
@@ -99,15 +107,48 @@ public final class MetronomeEngine: @unchecked Sendable {
         startGraph()
     }
 
+    /// A format the output node will actually accept.
+    ///
+    /// Above two channels a format needs an explicit channel layout: without
+    /// one the connection is ambiguous and silently never renders, which is
+    /// exactly how a four-output interface turned the click off. Discrete
+    /// layout is right here - these are separate sends to separate monitors,
+    /// not a surround mix.
+    static func outputFormat(sampleRate: Double, channels: AVAudioChannelCount) -> AVAudioFormat? {
+        if channels <= 2 {
+            return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels)
+        }
+        let tag = kAudioChannelLayoutTag_DiscreteInOrder | channels
+        if let layout = AVAudioChannelLayout(layoutTag: tag) {
+            return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channelLayout: layout)
+        }
+        // Stereo still beats silence.
+        return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)
+    }
+
     private func buildGraph() {
         // Deliberately never touch engine.mainMixerNode - merely referencing it
         // instantiates a mixer and a possible format conversion between us and
         // the output.
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
-        let sampleRate = hardwareFormat.sampleRate > 0 ? hardwareFormat.sampleRate : 48_000
-        let channels = max(1, min(hardwareFormat.channelCount, 2))
 
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: channels) else {
+        // Build on the device's own rate, never a guess. Assuming 48 kHz while
+        // the hardware runs at 44.1 produces a graph that is connected, started
+        // and silent - the worst possible failure, because everything reports
+        // success.
+        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
+            lastError = "Audio device reported no format; waiting for it to settle"
+            log.notice("Output format not ready; deferring graph build")
+            scheduleGraphRetry()
+            return
+        }
+
+        let sampleRate = hardwareFormat.sampleRate
+        // Every channel the device has, so the click can go to one output and
+        // the pad to another. Capped at what the routing bitmap can address.
+        let channels = max(1, min(hardwareFormat.channelCount, AVAudioChannelCount(SB_MAX_CHANNELS)))
+
+        guard let format = Self.outputFormat(sampleRate: sampleRate, channels: channels) else {
             lastError = "Could not create audio format"
             return
         }
@@ -124,10 +165,28 @@ public final class MetronomeEngine: @unchecked Sendable {
             return sb_render(statePointer, timestamp, frameCount, audioBufferList)
         }
 
+        graphRetries = 0
         sourceNode = node
         engine.attach(node)
         engine.connect(node, to: engine.outputNode, format: format)
         publishParams()
+        publishPad()
+    }
+
+    /// A device that is not ready yet usually is a moment later - plugging an
+    /// interface in is the common case. Retrying beats leaving the app with no
+    /// audio graph and no way back.
+    private func scheduleGraphRetry() {
+        guard graphRetries < 10 else {
+            log.error("Gave up waiting for a usable output format")
+            return
+        }
+        graphRetries += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, self.sourceNode == nil else { return }
+            self.buildGraph()
+            self.startGraph()
+        }
     }
 
     private func startGraph() {
@@ -200,8 +259,9 @@ public final class MetronomeEngine: @unchecked Sendable {
             rebuildBank(sampleRate: sampleRate)
         }
 
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate,
-                                         channels: max(1, min(hardwareFormat.channelCount, 2))) else {
+        guard let format = Self.outputFormat(
+            sampleRate: sampleRate,
+            channels: max(1, min(hardwareFormat.channelCount, AVAudioChannelCount(SB_MAX_CHANNELS)))) else {
             lastError = "Could not create audio format after route change"
             return
         }
@@ -302,6 +362,57 @@ public final class MetronomeEngine: @unchecked Sendable {
         timbre = newTimbre
         publishParams()
         sb_preview(state, Int32(SB_LEVEL_DOWNBEAT.rawValue))
+    }
+
+    /// Holds a chord, or nothing. Crossfades in the render thread, so calling
+    /// this mid-song is a swell rather than a jump.
+    func setPad(_ voicing: PadVoicing?, level: Double, sound: PadSound) {
+        padVoicing = voicing
+        padLevel = Float(max(0, min(level, 2)))
+        padSound = sound
+        publishPad()
+    }
+
+    private func publishPad() {
+        guard let bank else { return }
+        let table = bank.padTable(for: padSound)
+
+        guard let voicing = padVoicing, table.samples != nil else {
+            // Voice count zero means "stop sounding"; the level is still sent
+            // so the render thread can fade out at the volume it was playing.
+            sb_publish_pad(state, table.samples, table.length, nil, nil, 0,
+                           padLevel, padSound.filterCoefficient)
+            return
+        }
+
+        var frequencies = voicing.frequencies
+        var gains = voicing.gains
+        frequencies.withUnsafeMutableBufferPointer { freqPtr in
+            gains.withUnsafeMutableBufferPointer { gainPtr in
+                sb_publish_pad(state, table.samples, table.length,
+                               freqPtr.baseAddress, gainPtr.baseAddress,
+                               UInt32(voicing.frequencies.count), padLevel,
+                               padSound.filterCoefficient)
+            }
+        }
+    }
+
+    /// Which output channels the click and the pad are written to, counted
+    /// from 1. Empty means every channel.
+    func setRouting(clickChannels: Set<Int>, padChannels: Set<Int>) {
+        func mask(_ channels: Set<Int>) -> UInt32 {
+            channels.reduce(into: UInt32(0)) { result, channel in
+                let index = channel - 1
+                guard index >= 0, index < Int(SB_MAX_CHANNELS) else { return }
+                result |= (1 << UInt32(index))
+            }
+        }
+        sb_set_channel_masks(state, mask(clickChannels), mask(padChannels))
+    }
+
+    /// How many output channels the current device actually has.
+    var outputChannelCount: Int {
+        Int(engine.outputNode.outputFormat(forBus: 0).channelCount)
     }
 
     private func publishParams() {

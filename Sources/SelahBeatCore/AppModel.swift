@@ -16,6 +16,11 @@ public final class AppModel {
     /// updating and the app must not try to update itself.
     public var updater: AppUpdating?
     public private(set) var sync: CatalogSync?
+    /// Backup to an anonymous account, and services shared by code. Both are
+    /// nil until a server is configured; the app works without either.
+    public let syncIdentity = SyncIdentity()
+    public private(set) var backup: BackupService?
+    public private(set) var shares: ShareService?
 
     /// Which service the sidebar has selected, if any.
     public var selectedServiceID: UUID?
@@ -57,6 +62,11 @@ public final class AppModel {
         metronome.eighthGain = settings.values.eighthGain
         metronome.sixteenthGain = settings.values.sixteenthGain
         metronome.applyLevelGains()
+        metronome.padLevel = settings.values.padLevel
+        metronome.padSound = settings.values.padSound
+        metronome.clickChannels = settings.values.clickChannels
+        metronome.padChannels = settings.values.padChannels
+
         metronome.refreshDiagnostics()
 
         #if DEBUG
@@ -65,6 +75,10 @@ public final class AppModel {
 
         if let baseURL = settings.serverBaseURL {
             sync = CatalogSync(service: APIClient(baseURL: baseURL), cache: catalog)
+
+            let client = SyncClient(baseURL: baseURL)
+            backup = BackupService(identity: syncIdentity, client: client, library: library)
+            shares = ShareService(identity: syncIdentity, client: client, library: library)
         }
     }
 
@@ -92,6 +106,10 @@ public final class AppModel {
         settings.values.quarterGain = metronome.quarterGain
         settings.values.eighthGain = metronome.eighthGain
         settings.values.sixteenthGain = metronome.sixteenthGain
+        settings.values.padLevel = metronome.padLevel
+        settings.values.padSound = metronome.padSound
+        settings.values.clickChannels = metronome.clickChannels
+        settings.values.padChannels = metronome.padChannels
     }
 
     public func flush() async {
@@ -263,6 +281,103 @@ public final class AppModel {
         guard let song = metronome.loadedItem?.song else { return false }
         editingSong = song
         return true
+    }
+
+    // MARK: - Backup and sharing
+
+    /// The token every sync call needs, registering the device on first use.
+    public func syncToken() async throws -> String {
+        guard let backup else { throw SyncClient.Failure.offline }
+        return try await backup.registerIfNeeded().token
+    }
+
+    /// Shares a service and returns the code to hand out.
+    public func shareService(_ serviceID: UUID) async throws -> String {
+        guard let shares else { throw SyncClient.Failure.offline }
+        return try await shares.share(serviceId: serviceID, token: try await syncToken())
+    }
+
+    /// Joins a service someone else shared. Returns it, so the UI can open it.
+    @discardableResult
+    public func joinService(code: String) async throws -> Service {
+        guard let shares else { throw SyncClient.Failure.offline }
+        return try await shares.join(code: code, token: try await syncToken())
+    }
+
+    /// Sends local edits of a shared service up, and pulls anyone else's down.
+    public func syncShare(_ serviceID: UUID) async {
+        guard let shares, shares.membership(forService: serviceID) != nil else { return }
+        do {
+            let token = try await syncToken()
+            try await shares.push(serviceId: serviceID, token: token)
+            _ = try await shares.refresh(serviceId: serviceID, token: token)
+        } catch {
+            // Sharing is an enrichment; a service you cannot reach still plays.
+            log.notice("Share sync skipped: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    // MARK: - Keeping a pad change
+
+    /// What the pad is doing differs from what the loaded song says, so the
+    /// card can offer to keep it. Covers both halves: whether a pad plays at
+    /// all, and in which key.
+    public struct PadChange: Sendable, Equatable {
+        public var title: String
+        public var enablesPad: Bool
+        public var changesKey: Bool
+        public var key: MusicalKey
+        public var changesSound: Bool
+        public var sound: PadSound
+    }
+
+    public var pendingPadChange: PadChange? {
+        guard let item = metronome.loadedItem else { return nil }
+
+        let armed = metronome.isPadArmed
+        let keyChanged = !metronome.padFollowsSong && item.key != metronome.padKey
+        // Only once a voice has been picked by hand, and only while a pad is
+        // actually in play for this song - otherwise every song would be
+        // offered a voice it never asked for.
+        let soundChanged = !metronome.padSoundFollowsSong
+            && armed
+            && item.song.padSound != metronome.padSound
+        guard armed != item.song.playsPad || keyChanged || soundChanged else { return nil }
+
+        return PadChange(title: item.song.title, enablesPad: armed,
+                         changesKey: keyChanged, key: metronome.padKey,
+                         changesSound: soundChanged, sound: metronome.padSound)
+    }
+
+    /// Writes the pad's current state onto the loaded song.
+    ///
+    /// A key saved here also clears any key set for this service placement,
+    /// which would otherwise keep winning and make the save look ignored - the
+    /// same rule as saving a tapped tempo.
+    public func savePadToLoadedSong() {
+        guard let loaded = metronome.loadedItem, let change = pendingPadChange else { return }
+
+        var song = loaded.song
+        song.padEnabled = change.enablesPad ? true : nil
+        if change.changesKey { song.defaultKey = change.key }
+        if change.changesSound || (change.enablesPad && song.padSound == nil) {
+            song.padSound = change.sound
+        }
+        library.updateSong(song)
+
+        var item = loaded.item
+        if change.changesKey, item.key != nil, let serviceID = metronome.loadedServiceID {
+            item.key = nil
+            library.updateItem(item, in: serviceID)
+        }
+
+        if let refreshed = library.resolved(item) {
+            metronome.load(refreshed, serviceID: metronome.loadedServiceID)
+        }
+        // The song now says what the pad was doing, so neither override is
+        // needed any more.
+        metronome.padManualOn = false
+        metronome.resumePadFollowingSong()
     }
 
     /// Loads the nth song of the service on screen, counting from 1.

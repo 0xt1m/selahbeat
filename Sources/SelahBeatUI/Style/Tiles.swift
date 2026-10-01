@@ -31,24 +31,29 @@ public struct TileCard<Content: View>: View {
 /// item that already exists.
 public struct AddTile: View {
     private let title: String
+    private let systemImage: String
     private let action: () -> Void
 
-    public init(title: String, action: @escaping () -> Void) {
+    public init(title: String, systemImage: String = "plus", action: @escaping () -> Void) {
         self.title = title
+        self.systemImage = systemImage
         self.action = action
     }
 
     public var body: some View {
         Button(action: action) {
             VStack(spacing: 8) {
-                Image(systemName: "plus")
+                Image(systemName: systemImage)
                     .font(.system(size: 22, weight: .semibold))
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .multilineTextAlignment(.center)
             }
             .foregroundStyle(Theme.accent)
-            .frame(maxWidth: .infinity)
+            // Fills the row rather than sitting at its own minimum height: in
+            // a grid the tallest tile sets the row, and an add tile that keeps
+            // to 108pt looks like a different kind of thing.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .frame(minHeight: 108)
             .background(
                 RoundedRectangle(cornerRadius: Theme.corner, style: .continuous)
@@ -91,7 +96,7 @@ public enum TileGrid {
     /// Adaptive so the same grid works on an iPhone (2 columns) and a wide
     /// Mac window (as many as fit) without a size-class branch.
     public static var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 158, maximum: 260), spacing: 14)]
+        [GridItem(.adaptive(minimum: 158, maximum: 260), spacing: 14, alignment: .top)]
     }
     public static let spacing: CGFloat = 14
 }
