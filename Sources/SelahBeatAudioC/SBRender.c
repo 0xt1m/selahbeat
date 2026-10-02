@@ -544,13 +544,14 @@ OSStatus sb_render(SBEngineState *st,
             uint8_t level = p->pattern[tickInBar];
             float busGain = (level < SB_ACCENT_LEVELS) ? p->levelGain[level] : 0.0f;
 
-            // Muting the accent bus must not punch a gap in the pulse: an
-            // accented tick drops back to whatever it is underneath, so 4/4
-            // with no accent is four even quarter notes.
+            // Muting the accent bus must not punch a gap in the pulse, and
+            // must not erase the top of the bar either. An accented tick keeps
+            // its own sound - the downbeat stays recognisably the downbeat -
+            // and only borrows the volume of the layer underneath it. Turning
+            // the accent down means less emphasis, not a bar with no start.
             if (busGain <= 0.0f &&
                 (level == SB_LEVEL_DOWNBEAT || level == SB_LEVEL_ACCENT)) {
-                level = sb_natural_level(tickInBar, p->ticksPerBeat);
-                busGain = p->levelGain[level];
+                busGain = p->levelGain[sb_natural_level(tickInBar, p->ticksPerBeat)];
             }
 
             if (level != SB_LEVEL_SILENT && level < SB_ACCENT_LEVELS) {

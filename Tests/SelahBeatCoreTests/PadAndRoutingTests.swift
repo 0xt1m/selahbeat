@@ -245,6 +245,7 @@ struct PadOverrideTests {
         var outputLatency: TimeInterval { 0 }
         var routeDescription: String { "test" }
         var isLowLatencyRoute: Bool { true }
+        var sampleRateHint: Double { 48_000 }
     }
 
     @Test("Switching a song's pad off mid-song silences it without changing the song")
@@ -288,5 +289,35 @@ struct PadOverrideTests {
         controller.setPadSounding(true)
         #expect(controller.isPadArmed)
         #expect(controller.isPadSounding)      // holds without the transport
+    }
+}
+
+@Suite("Accent fallback")
+struct AccentFallbackTests {
+    @Test("A muted accent bus still marks the top of the bar")
+    func downbeatSurvivesAMutedAccent() {
+        // The accent bus at zero, everything else at full: what the saved
+        // settings of someone who pulled the Accent slider down look like.
+        var gains = [Float](repeating: 1, count: Int(SB_ACCENT_LEVELS))
+        gains[Int(SB_LEVEL_DOWNBEAT.rawValue)] = 0
+        gains[Int(SB_LEVEL_ACCENT.rawValue)] = 0
+        // Subdivisions muted, as the standard mix has them, so only the three
+        // beats of the bar sound.
+        gains[Int(SB_LEVEL_EIGHTH.rawValue)] = 0
+        gains[Int(SB_LEVEL_SIXTEENTH.rawValue)] = 0
+
+        let harness = RenderHarness()
+        // 3/4 on a sixteenth grid: downbeat, then two plain beats.
+        let pattern: [UInt8] = [1, 5, 4, 5, 3, 5, 4, 5, 3, 5, 4, 5]
+        harness.publish(framesPerTick: 1_000, pattern: pattern, ticksPerBeat: 4, levelGains: gains)
+        harness.start()
+        harness.renderFrames(12_000, bufferSize: 512)
+
+        // Three beats sound, and the first is still the downbeat rather than
+        // having been flattened into an ordinary quarter.
+        let beats = harness.onsetLevels.prefix(3)
+        #expect(beats.count == 3)
+        #expect(beats.first == Int(SB_LEVEL_DOWNBEAT.rawValue))
+        #expect(beats.dropFirst().allSatisfy { $0 == Int(SB_LEVEL_QUARTER.rawValue) })
     }
 }

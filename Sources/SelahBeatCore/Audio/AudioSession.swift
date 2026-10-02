@@ -12,6 +12,10 @@ public protocol AudioSessionConfiguring: AnyObject, Sendable {
     func activate(preferredBufferFrames: Int) throws
     func deactivate()
     var outputLatency: TimeInterval { get }
+    /// The device's sample rate as the session knows it, or 0 when it does
+    /// not. Used when the output node has not reported a format yet, so the
+    /// graph is built at the real rate rather than a guess.
+    var sampleRateHint: Double { get }
     var routeDescription: String { get }
     /// False for Bluetooth A2DP, which adds 150-300 ms no engineering can fix.
     var isLowLatencyRoute: Bool { get }
@@ -21,6 +25,8 @@ public protocol AudioSessionConfiguring: AnyObject, Sendable {
 
 public final class MacAudioSession: AudioSessionConfiguring, @unchecked Sendable {
     public init() {}
+
+    public var sampleRateHint: Double { 0 }
 
     public func activate(preferredBufferFrames: Int) throws {
         // Nothing to activate on macOS; buffer size is applied to the output
@@ -71,6 +77,10 @@ public final class IOSAudioSession: AudioSessionConfiguring, @unchecked Sendable
 
     public var outputLatency: TimeInterval {
         AVAudioSession.sharedInstance().outputLatency
+    }
+
+    public var sampleRateHint: Double {
+        AVAudioSession.sharedInstance().sampleRate
     }
 
     public var routeDescription: String {

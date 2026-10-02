@@ -76,6 +76,9 @@ public final class MetronomeEngine: @unchecked Sendable {
     private var padSound: PadSound = .warm
 
     private var graphRetries = 0
+    /// True when the graph was built on a guessed format because the device
+    /// had not reported one yet.
+    private var builtOnFallbackFormat = false
 
     public private(set) var lastError: String?
 
@@ -132,21 +135,22 @@ public final class MetronomeEngine: @unchecked Sendable {
         // the output.
         let hardwareFormat = engine.outputNode.outputFormat(forBus: 0)
 
-        // Build on the device's own rate, never a guess. Assuming 48 kHz while
-        // the hardware runs at 44.1 produces a graph that is connected, started
-        // and silent - the worst possible failure, because everything reports
-        // success.
-        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
-            lastError = "Audio device reported no format; waiting for it to settle"
-            log.notice("Output format not ready; deferring graph build")
-            scheduleGraphRetry()
-            return
-        }
-
-        let sampleRate = hardwareFormat.sampleRate
+        // Build on the device's own rate wherever it is known: assuming 48 kHz
+        // while the hardware runs at 44.1 produces a graph that is connected,
+        // started and silent. But refusing to build at all is worse - on iOS
+        // the output node often reports nothing until the graph has run once,
+        // and a metronome with no graph is just silence. So: the output node
+        // if it knows, the audio session if it does, 48 kHz as a last resort,
+        // and a retry to correct a fallback once the truth arrives.
+        let hinted = session.sampleRateHint
+        let sampleRate = hardwareFormat.sampleRate > 0 ? hardwareFormat.sampleRate
+                       : (hinted > 0 ? hinted : 48_000)
+        builtOnFallbackFormat = hardwareFormat.sampleRate <= 0
         // Every channel the device has, so the click can go to one output and
         // the pad to another. Capped at what the routing bitmap can address.
-        let channels = max(1, min(hardwareFormat.channelCount, AVAudioChannelCount(SB_MAX_CHANNELS)))
+        let channels = hardwareFormat.channelCount > 0
+            ? max(1, min(hardwareFormat.channelCount, AVAudioChannelCount(SB_MAX_CHANNELS)))
+            : 2
 
         guard let format = Self.outputFormat(sampleRate: sampleRate, channels: channels) else {
             lastError = "Could not create audio format"
@@ -165,25 +169,46 @@ public final class MetronomeEngine: @unchecked Sendable {
             return sb_render(statePointer, timestamp, frameCount, audioBufferList)
         }
 
-        graphRetries = 0
         sourceNode = node
         engine.attach(node)
         engine.connect(node, to: engine.outputNode, format: format)
         publishParams()
         publishPad()
+
+        // A graph built on a guess has to be corrected once the device speaks.
+        if builtOnFallbackFormat { scheduleGraphRetry() }
     }
 
-    /// A device that is not ready yet usually is a moment later - plugging an
-    /// interface in is the common case. Retrying beats leaving the app with no
-    /// audio graph and no way back.
+    /// Rebuilds once the device reports a real format, replacing a graph that
+    /// was built on a guess. Does nothing if the guess turned out to be right.
     private func scheduleGraphRetry() {
-        guard graphRetries < 10 else {
+        guard graphRetries < 20 else {
             log.error("Gave up waiting for a usable output format")
             return
         }
         graphRetries += 1
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self, self.sourceNode == nil else { return }
+            guard let self, self.builtOnFallbackFormat else { return }
+
+            let format = self.engine.outputNode.outputFormat(forBus: 0)
+            guard format.sampleRate > 0 else {
+                self.scheduleGraphRetry()
+                return
+            }
+            guard format.sampleRate != self.currentSampleRate
+                    || format.channelCount != self.sourceNode?.outputFormat(forBus: 0).channelCount else {
+                // The guess was right after all.
+                self.builtOnFallbackFormat = false
+                return
+            }
+
+            self.log.notice("Rebuilding the graph on the device's real format")
+            if let node = self.sourceNode {
+                self.engine.disconnectNodeOutput(node)
+                self.engine.detach(node)
+                self.sourceNode = nil
+            }
             self.buildGraph()
             self.startGraph()
         }

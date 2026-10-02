@@ -71,6 +71,7 @@ public final class AppModel {
 
         #if DEBUG
         seedSampleDataIfRequested()
+        Task { await runAudioSelfCheckIfRequested() }
         #endif
 
         if let baseURL = settings.serverBaseURL {
@@ -118,6 +119,36 @@ public final class AppModel {
     }
 
     #if DEBUG
+    /// Starts the click for a moment and reports whether ticks actually fired.
+    ///
+    /// The command-line AudioCheck cannot run on a phone or a simulator, which
+    /// is exactly where the audio graph is most likely to come up differently.
+    /// Triggered by `-audio-self-check`, logged, never run in a release build.
+    public func runAudioSelfCheckIfRequested() async {
+        guard ProcessInfo.processInfo.arguments.contains("-audio-self-check") else { return }
+
+        metronome.refreshDiagnostics()
+        let before = metronome.diagnostics
+        log.notice("SELFCHECK engine=\(before.engineRunning) rate=\(Int(before.sampleRate)) buffer=\(before.bufferFrames)")
+
+        let startTicks = metronome.lastTickIndexForDiagnostics
+        metronome.setTempo(120)
+        metronome.start()
+        try? await Task.sleep(for: .seconds(2))
+        let clickTicks = metronome.lastTickIndexForDiagnostics - startTicks
+
+        metronome.padKey = MusicalKey(.E)
+        metronome.padManualOn = true
+        try? await Task.sleep(for: .seconds(2))
+        metronome.refreshDiagnostics()
+        let after = metronome.diagnostics
+        metronome.stop()
+        metronome.padManualOn = false
+
+        log.notice("SELFCHECK ticks=\(clickTicks) expected=~4 peakRenderMicros=\(Int(after.maxRenderMicros)) load=\(after.renderLoad)")
+        log.notice("SELFCHECK result=\(clickTicks >= 3 && after.maxRenderMicros > 0 ? "PASS" : "FAIL")")
+    }
+
     /// Debug-only fixtures, used for UI screenshots and manual testing.
     /// Triggered by the `-seed-sample-data` launch argument; never runs in a
     /// release build and never touches a library that already has songs.
