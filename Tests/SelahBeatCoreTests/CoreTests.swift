@@ -622,14 +622,12 @@ struct AccentMutingTests {
         h.renderFrames(1_000 * 8, bufferSize: 256)
 
         #expect(h.onsets.count == 8, "a muted accent must not leave a gap")
-        // The downbeat keeps its own sound and only borrows the quarter bus's
-        // volume: muting the accent removes the emphasis, not the top of the
-        // bar. Flattening it outright left 3/4 sounding like three identical
-        // beats, which is what sent me looking.
-        let downbeats = stride(from: 0, to: h.onsetLevels.count, by: 4).map { h.onsetLevels[$0] }
-        #expect(downbeats.allSatisfy { $0 == Int(SB_LEVEL_DOWNBEAT.rawValue) })
-        let others = h.onsetLevels.enumerated().filter { $0.offset % 4 != 0 }.map(\.element)
-        #expect(others.allSatisfy { $0 == Int(SB_LEVEL_QUARTER.rawValue) })
+        // Muting the bar marker really does mute it: every beat sounds the
+        // same. The mixer says so in as many words, because the alternative -
+        // keeping the downbeat audible anyway - means a muted control that is
+        // not muted.
+        #expect(h.onsetLevels.allSatisfy { $0 == Int(SB_LEVEL_QUARTER.rawValue) },
+                "beat one should sound as a plain quarter, not as an accent")
     }
 
     @Test("With the accent unmuted the downbeat is distinct")

@@ -304,12 +304,21 @@ public struct MetronomeView: View {
 
             // Separate busses so sixteenths can sit under the eighths, and both
             // under the beat, without changing the click sound itself.
-            mixSlider("Accent", value: Bindable(controller).accentGain, range: 0...2)
+            // Named for what it does rather than what it is: this is the bar
+            // marker, and a drummer looking for "why do all my beats sound the
+            // same" is not looking for the word Accent.
+            mixSlider("Downbeat", value: Bindable(controller).accentGain, range: 0...2)
+
+            if controller.accentGain <= 0 {
+                Label("The first beat of the bar is not marked", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.warning)
+            }
             mixSlider("Quarter notes", value: Bindable(controller).quarterGain, range: 0...2)
             mixSlider("Eighth notes", value: Bindable(controller).eighthGain, range: 0...2)
             mixSlider("Sixteenth notes", value: Bindable(controller).sixteenthGain, range: 0...2)
 
-            Text("Unmute eighths to add offbeats between the quarter notes, and sixteenths to fill between those. Muting the accent leaves the downbeat sounding as a plain quarter.")
+            Text("Unmute eighths to add offbeats between the quarter notes, and sixteenths to fill between those. With the downbeat muted every beat of the bar sounds the same.")
                 .font(.caption2)
                 .foregroundStyle(Theme.secondaryText.opacity(0.8))
         }
