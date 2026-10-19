@@ -11,11 +11,12 @@
     "postbuild": "rm -rf .next/standalone/.next/static .next/standalone/catalog && cp -r .next/static .next/standalone/.next/static && cp -r catalog .next/standalone/catalog"
   },
   "dependencies": {
-    "next": "15.1.6",
+    "better-sqlite3": "11.8.1",
+    "drizzle-orm": "^0.45.4",
+    "next": "^15.5.28",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "better-sqlite3": "11.8.1",
-    "drizzle-orm": "0.38.4",
+    "sharp": "^0.35.5",
     "zod": "3.24.1"
   },
   "devDependencies": {

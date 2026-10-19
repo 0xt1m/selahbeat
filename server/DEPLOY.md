@@ -193,3 +193,41 @@ them. Restore by stopping the service, replacing the file, and starting again.
 | Catalog empty | The build's postbuild step did not run; re-run `npm run build` and check `.next/standalone/catalog/` exists |
 | `gyp ERR!` during `npm ci` | Missing `build-essential` / `python3` — better-sqlite3 compiles from source |
 | Gets a certificate but shows another site | Another server block already claims `selahbeat.com`, or is the default; check `nginx -T` |
+
+---
+
+## Monitoring and forensics
+
+Added after the October 2026 incident, in which a cache-poisoning bug in
+Next.js 15.1.6 let an attacker serve a fake CAPTCHA from this domain for
+several days. Two things made it hard to investigate: nothing was watching the
+served HTML, and the journal held roughly an hour of logs, so the request that
+caused it was long gone.
+
+**The canary.** `deploy/selahbeat-canary.sh`, installed to
+`/usr/local/bin/` and run every five minutes by `selahbeat-canary.timer`. It
+fetches the homepage and fails loudly if it finds a `data:` URI script, a
+script from any other origin, a known malware signature, or an API that has
+stopped answering. On a hit it writes the page to
+`/var/log/selahbeat-evidence/` so there is something to look at afterwards.
+
+```bash
+sudo tee /usr/local/bin/selahbeat-canary.sh < deploy/selahbeat-canary.sh
+sudo chmod +x /usr/local/bin/selahbeat-canary.sh
+sudo systemctl enable --now selahbeat-canary.timer
+```
+
+**Where to look when something is wrong:**
+
+| | |
+|---|---|
+| Alerts | `journalctl -t selahbeat-canary -p warning` |
+| Canary history | `/var/log/selahbeat-canary.log` |
+| Saved evidence | `/var/log/selahbeat-evidence/` |
+| Every request | `/var/log/caddy/selahbeat.log` (10 × 10 MiB, rotated) |
+| App output | `journalctl -u selahbeat` (60 days, 500 MB cap) |
+
+**Hardening in place:** the image optimiser is disabled in `next.config.mjs`
+*and* returns 404 at the proxy; the in-memory response cache is off; and Caddy
+strips the Next.js internal headers that keep turning up in cache-poisoning and
+middleware-bypass advisories.
