@@ -62,6 +62,17 @@ final class AppKitEventBridge {
         case 125:  // down arrow
             model.metronome.nudge(event.modifierFlags.contains(.shift) ? -5 : -1)
             return true
+        // Stepping through the set list, which is what a drummer reaches for
+        // between songs. Declined when there is nowhere to go, so the arrows
+        // keep doing their ordinary job everywhere else in the app.
+        case 124:  // right arrow - next song
+            guard model.canStepForward else { return false }
+            model.step(1)
+            return true
+        case 123:  // left arrow - previous song
+            guard model.canStepBackward else { return false }
+            model.step(-1)
+            return true
         default:
             break
         }
